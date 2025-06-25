@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Montserrat:wght@400;600&family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #2c3e50;
+      --secondary: #e74c3c;
+      --accent: #3498db;
+      --gold: #f1c40f;
+      --text: #34495e;
+      --parchment: #f5e7d0;
+    }
+    
+    body {
+      background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+      min-height: 100vh;
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: 'Montserrat', sans-serif;
+      overflow: hidden;
+    }
+    
+    .certificate-container {
+      perspective: 1000px;
+      position: relative;
+    }
+    
+    .certificate {
+      width: 1000px;
+      padding: 60px;
+      background: var(--parchment);
+      position: relative;
+      text-align: center;
+      overflow: hidden;
+      transform-style: preserve-3d;
+      transition: all 0.5s ease;
+      animation: floatIn 1s ease-out forwards, float 6s ease-in-out infinite 1s;
+      opacity: 0;
+      transform: translateY(50px) rotateX(15deg);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+      border: 1px solid rgba(0,0,0,0.1);
+    }
+    
+    /* Elaborate Border Design */
+    .certificate::before {
+      content: "";
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      right: 20px;
+      bottom: 20px;
+      border: 2px dashed rgba(139, 69, 19, 0.3);
+      pointer-events: none;
+    }
+    
+    .border-decoration {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+    
+    .corner {
+      position: absolute;
+      width: 80px;
+      height: 80px;
+      background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M0,0 L100,0 L100,100 L0,100 Z" fill="none" stroke="%232c3e50" stroke-width="2"/><path d="M20,20 L80,20 L80,80 L20,80 Z" fill="none" stroke="%232c3e50" stroke-width="1"/></svg>') center/contain no-repeat;
+    }
+    
+    .top-left { top: 10px; left: 10px; transform: rotate(0deg); }
+    .top-right { top: 10px; right: 10px; transform: rotate(90deg); }
+    .bottom-left { bottom: 10px; left: 10px; transform: rotate(270deg); }
+    .bottom-right { bottom: 10px; right: 10px; transform: rotate(180deg); }
+    
+    /* Decorative Flourishes */
+    .flourish {
+      position: absolute;
+      opacity: 0.1;
+      z-index: 0;
+    }
+    
+    .flourish-1 {
+      top: 50px;
+      right: 50px;
+      width: 150px;
+      height: 150px;
+      background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50,0 Q80,20 50,50 Q20,80 50,100 Q80,80 50,50 Q20,20 50,0 Z" fill="%232c3e50"/></svg>') center/contain no-repeat;
+    }
+    
+    .flourish-2 {
+      bottom: 50px;
+      left: 50px;
+      width: 120px;
+      height: 120px;
+      background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M0,50 Q25,25 50,50 Q75,75 100,50 Q75,25 50,50 Q25,75 0,50 Z" fill="%232c3e50"/></svg>') center/contain no-repeat;
+    }
+    
+    /* Background Text Designs */
+    .background-text {
+      position: absolute;
+      font-family: 'Playfair Display', serif;
+      color: rgba(44, 62, 80, 0.05);
+      font-weight: bold;
+      z-index: 0;
+      user-select: none;
+    }
+    
+    .bg-text-1 {
+      top: 20%;
+      left: 10%;
+      font-size: 5rem;
+      transform: rotate(-15deg);
+    }
+    
+    .bg-text-2 {
+      bottom: 50%;
+      right: 10%;
+      font-size: 4rem;
+      transform: rotate(10deg);
+    }
+    
+    .bg-text-3 {
+      top: 60%;
+      left: 50%;
+      font-size: 5rem;
+      transform: translateX(-50%) rotate(5deg);
+    }
+    
+    @keyframes floatIn {
+      0% { opacity: 0; transform: translateY(50px) rotateX(15deg); }
+      100% { opacity: 1; transform: translateY(0) rotateX(0); }
+    }
+    
+    @keyframes float {
+      0% { transform: translateY(0px); }
+      50% { transform: translateY(-15px); }
+      100% { transform: translateY(0px); }
+    }
+    
+    .certificate:hover {
+      transform: rotateY(5deg) translateY(-10px);
+      box-shadow: 0 25px 70px rgba(0,0,0,0.3);
+    }
+    
+    .logo {
+      position: absolute;
+      top: 40px;
+      left: 40px;
+      height: 80px;
+      width: 120px;  /* Adjust to match your image size */
+      height: 120px;
+      z-index: 1;
+      opacity: 0;
+      animation: fadeIn 0.8s ease 0.2s forwards;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+    }
+    .signature-image {
+  height: 35px;          /* Make it larger */
+  width: auto;            /* Maintain aspect ratio */
+  display: block;
+  margin: 0 auto -10px;   /* Center the image and lift it slightly */
+  animation: fadeIn 0.8s ease 2s forwards;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); /* More visible */
+}
+
+    .seal {
+      position: absolute;
+      top: 40px;
+      right: 40px;
+      width: 120px;  /* Adjust to match your image size */
+      height: 120px; /* Adjust to match your image size */
+      background: url('static/images/seal.png') center/contain no-repeat;
+      z-index: 1;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+      /* Remove these properties if no longer needed: */
+      /* border-radius: 50%; */
+      /* background: conic-gradient(...); */
+      /* border: 3px solid white; */
+      transform: rotate(15deg); /* Rotate 15 degrees clockwise */
+  transform-origin: center;
+    }
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-weight: bold;
+      font-size: 0.9rem;
+      text-align: center;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+      border: 3px solid white;
+      z-index: 1;
+    }
+    
+    .header {
+      margin-bottom: 40px;
+      position: relative;
+      z-index: 1;
+    }
+    
+    .header h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: 3.5rem;
+      color: var(--primary);
+      margin: 0;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      position: relative;
+      display: inline-block;
+      opacity: 0;
+      animation: fadeInUp 0.8s ease 0.3s forwards;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+    }
+    
+    .header h1::after {
+      content: "";
+      position: absolute;
+      bottom: -15px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 3px;
+      background: var(--secondary);
+      animation: lineGrow 0.8s ease 0.8s forwards;
+    }
+    
+    .header p {
+      font-size: 1.2rem;
+      color: var(--text);
+      margin-top: 25px;
+      opacity: 0;
+      animation: fadeIn 0.8s ease 0.5s forwards;
+    }
+    
+    .recipient {
+      font-family: 'Dancing Script', cursive;
+      font-size: 3.5rem;
+      color: var(--secondary);
+      margin: 40px 0;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+      position: relative;
+      z-index: 1;
+      opacity: 0;
+      transform: scale(0.8);
+      animation: recipientAppear 0.8s ease 1s forwards, glow 2s infinite alternate 1.8s;
+    }
+    
+    .course {
+      font-size: 1.8rem;
+      color: var(--primary);
+      font-weight: 600;
+      margin: 30px 0;
+      padding: 15px 30px;
+      display: inline-block;
+      border: 3px double var(--gold);
+      border-radius: 50px;
+      background: linear-gradient(to right, rgba(241, 196, 15, 0.1), rgba(241, 196, 15, 0.05));
+      opacity: 0;
+      transform: translateY(20px);
+      animation: fadeInUp 0.8s ease 1.2s forwards;
+    }
+    
+    .date {
+      font-size: 1.2rem;
+      color: var(--text);
+      margin: 30px 0;
+      font-style: italic;
+      opacity: 0;
+      animation: fadeIn 0.8s ease 1.5s forwards;
+    }
+    
+    .director-signature {
+      margin-top: 40px;
+      display: flex;
+      justify-content: center;
+      opacity: 0;
+      animation: fadeIn 0.8s ease 1.8s forwards;
+    }
+    
+    .signature {
+      text-align: center;
+      position: relative;
+    }
+    
+    .signature-line {
+      border-bottom: 2px solid var(--primary);
+      width: 0;
+      margin: 0 auto;
+      position: relative;
+      height: 1px;
+      animation: lineGrow 0.8s ease 2s forwards;
+    }
+    .signature-line-fancy {
+  margin: 10px auto 5px;
+  width: 180px; /* Length of the line */
+  height: 2px;
+  background: linear-gradient(to right, #2c3e50, #e74c3c, #2c3e50);
+  border-radius: 2px;
+  animation: growLine 1s ease forwards;
+  opacity: 0;
+  animation-delay: 2.2s;
+}
+
+@keyframes growLine {
+  from {
+    width: 0;
+    opacity: 0;
+  }
+  to {
+    width: 180px;
+    opacity: 1;
+  }
+}
+
+    .signature-title {
+      font-size: 1.5rem;
+      color: var(--primary);
+      margin-top: 5px;
+      font-weight: 600;
+      opacity: 0;
+      animation: fadeIn 0.5s ease 2.3s forwards;
+    }
+    
+    .confetti {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      background-color: var(--secondary);
+      opacity: 0;
+      z-index: 10;
+      pointer-events: none;
+    }
+    
+    .confetti.gold { background-color: var(--gold); }
+    .confetti.blue { background-color: var(--accent); }
+    .confetti.dark { background-color: var(--primary); }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    
+    @keyframes fadeInUp {
+      from { 
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to { 
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    @keyframes recipientAppear {
+      0% { opacity: 0; transform: scale(0.8); }
+      50% { transform: scale(1.1); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    
+    @keyframes lineGrow {
+      from { width: 0; }
+      to { width: 250px; }
+    }
+    
+    @keyframes glow {
+      from { text-shadow: 0 0 5px rgba(231, 76, 60, 0.5); }
+      to { text-shadow: 0 0 15px rgba(231, 76, 60, 0.8); }
+    }
+  </style>
+</head>
+<body>
+  <div class="certificate-container">
+    <div class="certificate" id="certificate">
+      <!-- Elaborate Border Decorations -->
+      <div class="border-decoration">
+        <div class="corner top-left"></div>
+        <div class="corner top-right"></div>
+        <div class="corner bottom-left"></div>
+        <div class="corner bottom-right"></div>
+        <div class="flourish flourish-1"></div>
+        <div class="flourish flourish-2"></div>
+      </div>
+      
+      <!-- Background Text Designs -->
+      <div class="background-text bg-text-1">EXCELLENCE</div>
+      <div class="background-text bg-text-2">ACHIEVEMENT</div>
+      <div class="background-text bg-text-3">HONORABLE</div>
+      
+      <img src="{{ url_for('static', filename='images/logo.png') }}" class="logo" alt="Company Logo">
+      <img src="{{ url_for('static', filename='images/seal.png') }}" class="seal" alt="Official Seal">
+      
+      <div class="header">
+        <h1>Certificate</h1>
+        <p>of Achievement</p>
+      </div>
+      
+      <p>This certificate is proudly presented to</p>
+      
+      <div class="recipient">{{ name }}</div>
+
+      
+      <p>for successfully completing the course</p>
+      
+     <div class="course">{{ course }}</div>
+       
+      <p>with honors and distinction</p>
+      
+      <div class="date">on this {{ date }}</div>
+
+      
+      <!-- Director signature centered at bottom -->
+      <div class="director-signature">
+        <div class="signature">
+          <img src="{{ url_for('static', filename='images/signature.png') }}" alt="Director Signature" class="signature-image">
+          <div class="signature-line-fancy"></div>
+          <div class="signature-title">Director</div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Initialize certificate animations
+    document.addEventListener('DOMContentLoaded', function() {
+      const cert = document.getElementById('certificate');
+      setTimeout(() => {
+        cert.classList.add('animate');
+        createConfetti(window.innerWidth / 2, window.innerHeight / 2, 50);
+      }, 100);
+      
+      // Click/touch celebration
+      cert.addEventListener('click', function(e) {
+        createConfetti(e.clientX, e.clientY, 30);
+      });
+      
+      cert.addEventListener('touchstart', function(e) {
+        const touch = e.touches[0];
+        createConfetti(touch.clientX, touch.clientY, 30);
+      });
+    });
+    
+    // Confetti generator
+    function createConfetti(x, y, count = 30) {
+      const colors = ['secondary', 'gold', 'blue', 'dark'];
+      
+      for (let i = 0; i < count; i++) {
+        const confetti = document.createElement('div');
+        confetti.className = `confetti ${colors[Math.floor(Math.random() * colors.length)]}`;
+        confetti.style.left = x + 'px';
+        confetti.style.top = y + 'px';
+        confetti.style.opacity = '1';
+        
+        const angle = Math.random() * Math.PI * 2;
+        const velocity = 3 + Math.random() * 5;
+        const rotation = Math.random() * 360;
+        const size = 8 + Math.random() * 8;
+        
+        confetti.style.width = `${size}px`;
+        confetti.style.height = `${size}px`;
+        confetti.style.borderRadius = Math.random() > 0.5 ? '50%' : '0';
+        confetti.style.transform = `rotate(${rotation}deg)`;
+        
+        document.body.appendChild(confetti);
+        
+        const animation = confetti.animate([
+          { 
+            transform: `translate(0, 0) rotate(${rotation}deg)`,
+            opacity: 1 
+          },
+          { 
+            transform: `translate(${Math.cos(angle) * velocity * 100}px, ${Math.sin(angle) * velocity * 100}px) rotate(${rotation + 360}deg)`,
+            opacity: 0 
+          }
+        ], {
+          duration: 1000 + Math.random() * 1000,
+          easing: 'cubic-bezier(0.1, 0.8, 0.3, 1)'
+        });
+        
+        animation.onfinish = () => confetti.remove();
+      }
+    }
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+</body>
+</html>
