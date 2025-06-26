@@ -4,20 +4,15 @@ import smtplib
 import sqlite3
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.mime.application import MIMEApplication
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, send_file, render_template
 from apscheduler.schedulers.background import BackgroundScheduler
 from together import Together
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 from io import BytesIO
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Image
 from datetime import datetime, timedelta
 import mysql.connector
-from PIL import Image as PILImage
-import io
 
 # === CONFIGURATION ===
 SMTP_SERVER = "smtp.gmail.com"
@@ -25,7 +20,6 @@ SMTP_PORT = 465
 EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
 EMAIL_PASSWORD = "fmbemfjkavtkvugs"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
-LOGO_PATH = "static/logo.png"  # Path to your logo image
 
 # === Setup Together client ===
 together = Together(api_key=TOGETHER_API_KEY)
@@ -49,53 +43,6 @@ def get_progress(email, course):
 
 def reset_progress(email, course):
     progress_store[(email, course)] = 0
-
-# === Certificate Generation ===
-def generate_certificate(name, course, date):
-    buffer = BytesIO()
-    
-    # Create PDF
-    doc = SimpleDocTemplate(buffer, pagesize=letter,
-                        rightMargin=72, leftMargin=72,
-                        topMargin=72, bottomMargin=72)
-    
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='Center', alignment=1))
-    styles.add(ParagraphStyle(name='Title', fontSize=24, leading=30, alignment=1))
-    styles.add(ParagraphStyle(name='Subtitle', fontSize=16, leading=22, alignment=1))
-    
-    # Story holds all the PDF elements
-    story = []
-    
-    # Add logo if exists
-    if os.path.exists(LOGO_PATH):
-        logo = Image(LOGO_PATH, width=150, height=150)
-        logo.hAlign = 'CENTER'
-        story.append(logo)
-        story.append(Spacer(1, 24))
-    
-    # Certificate title
-    story.append(Paragraph("Certificate of Completion", styles["Title"]))
-    story.append(Spacer(1, 24))
-    
-    # Certificate text
-    story.append(Paragraph("This is to certify that", styles["Center"]))
-    story.append(Spacer(1, 12))
-    story.append(Paragraph(f"<b>{name}</b>", styles["Title"]))
-    story.append(Spacer(1, 12))
-    story.append(Paragraph("has successfully completed the course", styles["Center"]))
-    story.append(Spacer(1, 12))
-    story.append(Paragraph(f"<b>{course}</b>", styles["Subtitle"]))
-    story.append(Spacer(1, 24))
-    story.append(Paragraph(f"Date: {date}", styles["Center"]))
-    story.append(Spacer(1, 36))
-    story.append(Paragraph("LearnHub Education", styles["Subtitle"]))
-    
-    doc.build(story)
-    
-    buffer.seek(0)
-    return buffer
-
 
 # === Combined HTML Template ===
 FULL_TEMPLATE = '''
@@ -782,7 +729,7 @@ FULL_TEMPLATE = '''
 </html>
 '''
 
-def generate_daily_content(course, part, days):
+def generate_daily_content(course, part, days):  # Add days parameter
     if days == 1:
         prompt = f"""
 You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
@@ -832,63 +779,15 @@ Include in Lesson {part}:
     )
     return response.choices[0].message.content.strip()
 
-def send_certificate_email(email, course):
-    try:
-        # Get user name from database or session
-        name = "Learner"  # Default if name not found
-        try:
-            conn = mysql.connector.connect(
-                host="localhost",
-                user="root",
-                password="",
-                database="userform"
-            )
-            cur = conn.cursor()
-            cur.execute("SELECT name FROM usertable WHERE email = %s", (email,))
-            result = cur.fetchone()
-            if result:
-                name = result[0]
-            cur.close()
-            conn.close()
-        except Exception as e:
-            print(f"Error fetching user name: {e}")
-            name = email.split("@")[0]  # Fallback to email prefix
-        
-        date = datetime.now().strftime("%B %d, %Y")
-        cert_buffer = generate_certificate(name, course, date)
-        
-        body = f"""
-        <h2>Congratulations on completing your course!</h2>
-        <p>You've successfully completed the <strong>{course}</strong> course. We're proud of your achievement!</p>
-        <p>Attached to this email is your certificate of completion. You can also download it anytime from your LearnHub dashboard.</p>
-        <p>Keep up the great work and consider taking another course to continue your learning journey!</p>
-        """
-        
-        cert_buffer.seek(0)
-        send_email(
-            email,
-            f"Congratulations! Your {course} Certificate",
-            body,
-            cert_buffer,
-            f"{course.replace(' ', '_')}_Certificate.pdf"
-        )
-        return True
-    except Exception as e:
-        print(f"Failed to send certificate email: {str(e)}")
-        return False
-
-def send_email(to_email, subject, body, attachment=None, attachment_name="certificate.pdf"):
+def send_email(to_email, subject, body):
     try:
         if not to_email or "@" not in to_email:
             print(f"❌ Invalid email address: {to_email}")
             return False
-            
         msg = MIMEMultipart()
         msg["From"] = f"LearnHub <{EMAIL_ADDRESS}>"
         msg["To"] = to_email
         msg["Subject"] = subject
-        
-        # HTML body
         html = f"""
         <!DOCTYPE html>
         <html>
@@ -905,7 +804,7 @@ def send_email(to_email, subject, body, attachment=None, attachment_name="certif
         <body>
             <div class="container">
                 <div class="header">
-                    <h1>LearnHub</h1>
+                    <h1>LearnHub Daily Lesson</h1>
                     <p>Your personalized learning journey</p>
                 </div>
                 <div class="content">
@@ -920,13 +819,6 @@ def send_email(to_email, subject, body, attachment=None, attachment_name="certif
         </html>
         """
         msg.attach(MIMEText(html, "html"))
-        
-        # Add attachment if provided
-        if attachment:
-            part = MIMEApplication(attachment.read(), Name=attachment_name)
-            part['Content-Disposition'] = f'attachment; filename="{attachment_name}"'
-            msg.attach(part)
-        
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
@@ -936,30 +828,11 @@ def send_email(to_email, subject, body, attachment=None, attachment_name="certif
         print(f"❌ Error sending email: {str(e)}")
         return False
 
-def scheduled_job(email, course, part, days):
+def scheduled_job(email, course, part, days):  # Add days parameter
     try:
-        if part == days:  # Last day of the course
-            content = f"""
-            🎉 Congratulations on completing the {course} course! 🎉
-            
-            You've successfully completed all {days} days of learning. We're attaching your certificate of completion to this email.
-            
-            Here's a quick recap of what you've learned:
-            - [List key concepts from the course]
-            
-            Keep practicing and consider taking another course to continue your learning journey!
-            """
-            
-            # Send final lesson content
-            send_email(email, f"{course} - Final Lesson", content)
-            
-            # Send certificate
-            send_certificate_email(email, course)
-        else:
-            content = generate_daily_content(course, part, days)
-            send_email(email, f"{course} - Day {part}", content)
-            
-        increment_progress(email, course)
+        content = generate_daily_content(course, part, days)  # Pass days to generate_daily_content
+        if send_email(email, f"{course} - Day {part}", content):
+            increment_progress(email, course)
     except Exception as e:
         print(f"Failed to send day {part} email: {str(e)}")
 
@@ -971,43 +844,26 @@ def remove_existing_jobs(email, course):
             except:
                 pass
 
-def remove_existing_jobs(email, course):
-    for job in scheduler.get_jobs():
-        if job.id.startswith(f"{email}_{course}_"):
-            try:
-                scheduler.remove_job(job.id)
-            except:
-                pass
-
 def schedule_course(email, course, days, time_str):
     try:
-        # Parse AM/PM time and convert to 24-hour format
+        now = datetime.now()
+        # Convert AM/PM time to 24-hour format for scheduling
         time_obj = datetime.strptime(time_str, "%I:%M %p")
         hour = time_obj.hour
         minute = time_obj.minute
         
         remove_existing_jobs(email, course)
         
-        # Send welcome email
-        welcome_content = f"""
-        <h2>Welcome to {course}!</h2>
-        <p>Your learning journey starts now. You'll receive daily lessons at your selected time ({time_str}).</p>
-        <p>Course duration: {days} days</p>
-        <p>Here's what to expect:</p>
-        <ul>
-            <li>Daily lessons delivered to your inbox</li>
-            <li>Practical exercises to reinforce learning</li>
-            <li>A certificate upon completion</li>
-        </ul>
-        <p>We're excited to have you on board!</p>
-        """
+        welcome_content = (
+            f"Welcome to <b>{course}</b>!<br><br>"
+            "You will receive daily lessons in your inbox. Let's start learning!"
+        )
         
         if not send_email(email, f"Welcome to {course}!", welcome_content):
             raise Exception("Failed to send welcome email")
             
-        # Schedule daily lessons
         for i in range(1, days + 1):
-            scheduled_time = datetime.now() + timedelta(days=i-1)
+            scheduled_time = now + timedelta(days=i-1)
             scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
             
             job_id = f"{email}_{course}_day{i}"
@@ -1015,7 +871,7 @@ def schedule_course(email, course, days, time_str):
                 scheduled_job,
                 'date',
                 run_date=scheduled_time,
-                args=[email, course, i, days],
+                args=[email, course, i, days],  # Add days to args
                 id=job_id,
                 replace_existing=True
             )
@@ -1050,21 +906,19 @@ def schedule_form():
             email = request.form.get("email", "").strip()
             days = request.form.get("days", "").strip()
             time = request.form.get("time", "").strip()
-            
             if not all([email, days, time]):
                 raise ValueError("All fields are required")
+            if not "@" in email or not "." in email:
+                raise ValueError("Please enter a valid email address")
+            if not days.isdigit() or int(days) <= 0:
+                raise ValueError("Please enter a valid number of days")
             if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
                 raise ValueError("Please enter a valid email address")
-            if not days.isdigit() or int(days) <= 0 or int(days) > 365:
-                raise ValueError("Please enter a valid number of days (1-365)")
-            if ":" not in time or ("AM" not in time and "PM" not in time):
-                raise ValueError("Please select a valid time")
-                
-            if schedule_course(email, course, int(days), time):
-                return redirect(url_for('progress'))
-            else:
-                raise Exception("Failed to schedule course")
-                
+            schedule_course(email, course, int(days), time)
+            session['email'] = email
+            session['course'] = course
+            session['total_days'] = int(days)
+            return redirect(url_for('progress'))
         except ValueError as e:
             error_message = str(e)
             return render_template_string(
@@ -1167,41 +1021,6 @@ def certificate():
         name = email.split("@")[0]  # fallback to email prefix
 
     return render_template("cert.html", name=name, course=course, date=date)
-
-@app.route("/certificate")
-def certificate_download():
-    if "email" not in session:
-        return redirect(url_for("select_course"))
-
-    email = session["email"]
-    course = session.get("course", "Your Course")
-    date = datetime.now().strftime("%B %d, %Y")
-
-    try:
-        # Get user name from database
-        conn = mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="",
-            database="userform"
-        )
-        cur = conn.cursor()
-        cur.execute("SELECT name FROM usertable WHERE email = %s", (email,))
-        result = cur.fetchone()
-        name = result[0] if result else email.split("@")[0]
-        cur.close()
-        conn.close()
-
-        cert_buffer = generate_certificate(name, course, date)
-        return send_file(
-            cert_buffer,
-            as_attachment=True,
-            download_name=f"{course.replace(' ', '_')}_Certificate.pdf",
-            mimetype='application/pdf'
-        )
-    except Exception as e:
-        print(f"Error generating certificate: {e}")
-        return "Error generating certificate", 500
 
 if __name__ == "__main__":
     scheduler.start()
