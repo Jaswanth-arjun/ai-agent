@@ -5,3 +5,4 @@ reportlab
 together
 pillow
 mysql-connector-python
+gunicorn
