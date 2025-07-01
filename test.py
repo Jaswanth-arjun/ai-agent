@@ -45,7 +45,7 @@ def reset_progress(email, course):
     progress_store[(email, course)] = 0
 
 # === Combined HTML Template ===
-FULL_TEMPLATE = '''
+FULL_TEMPLATE =r'''
 <!DOCTYPE html>
 <html lang="en">
 <head>
