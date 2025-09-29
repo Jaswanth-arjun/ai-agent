@@ -13,6 +13,7 @@ from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
 from datetime import datetime, timedelta
 import mysql.connector
+import socket
 
 # === CONFIGURATION ===
 SMTP_SERVER = "smtp.gmail.com"
@@ -835,7 +836,15 @@ def scheduled_job(email, course, part, days):  # Add days parameter
             increment_progress(email, course)
     except Exception as e:
         print(f"Failed to send day {part} email: {str(e)}")
+        
+def check_smtp_port():
+    try:
+        socket.create_connection(("smtp.gmail.com", 587), timeout=10)
+        return "Port 587 is open!"
+    except Exception as e:
+        return f"Port blocked: {e}"
 
+print(check_smtp_port())
 def remove_existing_jobs(email, course):
     for job in scheduler.get_jobs():
         if job.id.startswith(f"{email}_{course}_"):
@@ -1025,5 +1034,6 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
 
 
