@@ -2,6 +2,8 @@ import os
 import re
 import smtplib
 import sqlite3
+import ssl
+import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, send_file, render_template
@@ -15,10 +17,11 @@ from datetime import datetime, timedelta
 import mysql.connector
 
 # === CONFIGURATION ===
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 465
-EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
-EMAIL_PASSWORD = "xwmcygkwtdalhavi"
+# Brevo SMTP Configuration (Recommended for production)
+SMTP_SERVER = "smtp-relay.brevo.com"
+SMTP_PORT = 587
+EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"  # Replace with your verified Brevo sender email
+EMAIL_PASSWORD = "K6Ra1yq5PIAsX0dT"  # Replace with your Brevo SMTP password
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
 
 # === Setup Together client ===
@@ -29,6 +32,10 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 csrf = CSRFProtect(app)
 scheduler = BackgroundScheduler()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # === GLOBAL PROGRESS STORE (for demo/testing; use a DB for production) ===
 progress_store = {}  # key: (email, course), value: int (completed days)
@@ -782,12 +789,14 @@ Include in Lesson {part}:
 def send_email(to_email, subject, body):
     try:
         if not to_email or "@" not in to_email:
-            print(f"❌ Invalid email address: {to_email}")
+            logger.error(f"❌ Invalid email address: {to_email}")
             return False
+        
         msg = MIMEMultipart()
         msg["From"] = f"LearnHub <{EMAIL_ADDRESS}>"
         msg["To"] = to_email
         msg["Subject"] = subject
+        
         html = f"""
         <!DOCTYPE html>
         <html>
@@ -818,14 +827,25 @@ def send_email(to_email, subject, body):
         </body>
         </html>
         """
+        
         msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+        
+        # Brevo SMTP connection with TLS
+        try:
+            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
+            server.starttls(context=ssl.create_default_context())  # Use TLS
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
-        print(f"📤 Successfully sent: {subject} to {to_email}")
-        return True
+            server.quit()
+            logger.info(f"📤 Successfully sent: {subject} to {to_email}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ SMTP error sending email: {str(e)}")
+            return False
+            
     except Exception as e:
-        print(f"❌ Error sending email: {str(e)}")
+        logger.error(f"❌ General error sending email: {str(e)}")
         return False
 
 def scheduled_job(email, course, part, days):  # Add days parameter
@@ -833,16 +853,20 @@ def scheduled_job(email, course, part, days):  # Add days parameter
         content = generate_daily_content(course, part, days)  # Pass days to generate_daily_content
         if send_email(email, f"{course} - Day {part}", content):
             increment_progress(email, course)
+            logger.info(f"✅ Successfully processed day {part} for {email} - {course}")
+        else:
+            logger.error(f"❌ Failed to send day {part} email for {email} - {course}")
     except Exception as e:
-        print(f"Failed to send day {part} email: {str(e)}")
+        logger.error(f"❌ Failed to process day {part} for {email} - {course}: {str(e)}")
 
 def remove_existing_jobs(email, course):
     for job in scheduler.get_jobs():
         if job.id.startswith(f"{email}_{course}_"):
             try:
                 scheduler.remove_job(job.id)
-            except:
-                pass
+                logger.info(f"🗑️ Removed existing job: {job.id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not remove job {job.id}: {e}")
 
 def schedule_course(email, course, days, time_str):
     try:
@@ -859,8 +883,9 @@ def schedule_course(email, course, days, time_str):
             "You will receive daily lessons in your inbox. Let's start learning!"
         )
         
+        # Test email sending first
         if not send_email(email, f"Welcome to {course}!", welcome_content):
-            raise Exception("Failed to send welcome email")
+            raise Exception("Failed to send welcome email - check Brevo SMTP configuration")
             
         for i in range(1, days + 1):
             scheduled_time = now + timedelta(days=i-1)
@@ -875,15 +900,16 @@ def schedule_course(email, course, days, time_str):
                 id=job_id,
                 replace_existing=True
             )
-            print(f"📅 Scheduled Day {i} email at {scheduled_time}")
+            logger.info(f"📅 Scheduled Day {i} email at {scheduled_time}")
             
         reset_progress(email, course)
         session['email'] = email
         session['course'] = course
         session['total_days'] = int(days)
         return True
+        
     except Exception as e:
-        print(f"Failed to schedule course: {str(e)}")
+        logger.error(f"❌ Failed to schedule course: {str(e)}")
         return False
 
 @app.route('/', methods=['GET', 'POST'])
@@ -914,11 +940,15 @@ def schedule_form():
                 raise ValueError("Please enter a valid number of days")
             if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
                 raise ValueError("Please enter a valid email address")
-            schedule_course(email, course, int(days), time)
-            session['email'] = email
-            session['course'] = course
-            session['total_days'] = int(days)
-            return redirect(url_for('progress'))
+            
+            if schedule_course(email, course, int(days), time):
+                session['email'] = email
+                session['course'] = course
+                session['total_days'] = int(days)
+                return redirect(url_for('progress'))
+            else:
+                raise ValueError("Failed to schedule course. Please try again.")
+                
         except ValueError as e:
             error_message = str(e)
             return render_template_string(
@@ -930,6 +960,7 @@ def schedule_form():
             )
         except Exception as e:
             error_message = "An error occurred. Please try again."
+            logger.error(f"Schedule form error: {str(e)}")
             return render_template_string(
                 FULL_TEMPLATE,
                 template='user_form',
@@ -1017,11 +1048,12 @@ def certificate():
         conn.close()
 
     except Exception as e:
-        print("❌ Error fetching name from MySQL:", e)
+        logger.error(f"❌ Error fetching name from MySQL: {e}")
         name = email.split("@")[0]  # fallback to email prefix
 
     return render_template("cert.html", name=name, course=course, date=date)
 
 if __name__ == "__main__":
     scheduler.start()
+    logger.info("🚀 LearnHub application started successfully")
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
