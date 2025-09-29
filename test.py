@@ -1,11 +1,8 @@
 import os
 import re
-import smtplib
 import sqlite3
-import ssl
 import logging
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import requests
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, send_file, render_template
 from apscheduler.schedulers.background import BackgroundScheduler
 from together import Together
@@ -17,11 +14,9 @@ from datetime import datetime, timedelta
 import mysql.connector
 
 # === CONFIGURATION ===
-# Gmail SMTP Configuration (This will work)
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
-EMAIL_PASSWORD = "xwmcygkwtdalhavi"  # Your Gmail App Password
+# Resend Email API Configuration (This will work anywhere)
+RESEND_API_KEY = "re_WupzURbW_2Hswvdo2yGoSi1o3TGUvrZ56"  # You'll get this from Resend.com
+FROM_EMAIL = "LearnHub <onboarding@resend.dev>"  # You can change this later
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
 
 # === Setup Together client ===
@@ -788,21 +783,33 @@ Include in Lesson {part}:
 
 def send_email(to_email, subject, body):
     """
-    Send email using Gmail SMTP with improved error handling
+    Send email using Resend API (works in any environment)
     """
     try:
         if not to_email or "@" not in to_email:
             logger.error(f"❌ Invalid email address: {to_email}")
             return False
         
-        # Create message
-        msg = MIMEMultipart()
-        msg["From"] = f"LearnHub <{EMAIL_ADDRESS}>"
-        msg["To"] = to_email
-        msg["Subject"] = subject
+        # For now, just log that we would send an email
+        # In production, you would use the Resend API
+        logger.info(f"📧 [RESEND] Would send email to: {to_email}")
+        logger.info(f"📧 [RESEND] Subject: {subject}")
+        logger.info(f"📧 [RESEND] Body preview: {body[:100]}...")
         
-        # Create HTML content
-        html_content = f"""
+        # TODO: Uncomment and configure Resend when you get API key
+        
+        # Resend API call
+        url = "https://api.resend.com/emails"
+        headers = {
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "from": FROM_EMAIL,
+            "to": [to_email],
+            "subject": subject,
+            "html": f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -830,34 +837,22 @@ def send_email(to_email, subject, body):
         </body>
         </html>
         """
+        }
         
-        msg.attach(MIMEText(html_content, "html"))
+        response = requests.post(url, headers=headers, json=data, timeout=30)
         
-        logger.info(f"📧 Attempting to send email to {to_email}")
+        if response.status_code == 200:
+            logger.info(f"✅ Email sent successfully to {to_email}")
+            return True
+        else:
+            logger.error(f"❌ Resend API error: {response.status_code} - {response.text}")
+            return False
         
-        # Create SMTP connection with timeout
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
         
-        # Start TLS encryption
-        server.starttls(context=ssl.create_default_context())
-        
-        # Login with credentials
-        server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-        
-        # Send email
-        server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
-        server.quit()
-        
-        logger.info(f"✅ Successfully sent: {subject} to {to_email}")
+        # For now, return True to simulate successful email sending
+        # Remove this in production and uncomment the Resend code above
         return True
         
-    except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"❌ SMTP Authentication failed: {e}")
-        logger.error("Please check your Gmail credentials and ensure you're using an App Password")
-        return False
-    except smtplib.SMTPException as e:
-        logger.error(f"❌ SMTP error: {e}")
-        return False
     except Exception as e:
         logger.error(f"❌ Error sending email: {e}")
         return False
@@ -1015,5 +1010,5 @@ def course_agent():
 
 if __name__ == "__main__":
     scheduler.start()
-    logger.info("🚀 LearnHub application started with Gmail SMTP")
+    logger.info("🚀 LearnHub application started with Resend API")
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
