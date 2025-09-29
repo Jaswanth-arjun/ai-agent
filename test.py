@@ -1,9 +1,9 @@
 import os
 import re
-import smtplib
 import sqlite3
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import requests
+import time
+from functools import wraps
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, send_file, render_template
 from apscheduler.schedulers.background import BackgroundScheduler
 from together import Together
@@ -13,13 +13,11 @@ from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
 from datetime import datetime, timedelta
 import mysql.connector
-import socket
 
 # === CONFIGURATION ===
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
-EMAIL_PASSWORD = "trzhksposgcmtbf"
+BREVO_API_KEY = "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"  # Replace with your actual Brevo API key
+BREVO_SENDER_EMAIL = "nellurujaswanth2004@gmail.com"
+BREVO_SENDER_NAME = "LearnHub"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
 
 # === Setup Together client ===
@@ -730,7 +728,7 @@ FULL_TEMPLATE = '''
 </html>
 '''
 
-def generate_daily_content(course, part, days):  # Add days parameter
+def generate_daily_content(course, part, days):
     if days == 1:
         prompt = f"""
 You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
@@ -780,16 +778,38 @@ Include in Lesson {part}:
     )
     return response.choices[0].message.content.strip()
 
-def send_email(to_email, subject, body):
+def retry_on_failure(max_retries=3, delay=2):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        print(f"❌ Failed after {max_retries} attempts: {str(e)}")
+                        raise
+                    print(f"⚠️ Attempt {attempt + 1} failed: {str(e)}. Retrying in {delay} seconds...")
+                    time.sleep(delay)
+            return None
+        return wrapper
+    return decorator
+
+@retry_on_failure(max_retries=3, delay=5)
+def send_email_brevo(to_email, subject, body):
+    """
+    Send email using Brevo (Sendinblue) API
+    """
     try:
         if not to_email or "@" not in to_email:
             print(f"❌ Invalid email address: {to_email}")
             return False
-        msg = MIMEMultipart()
-        msg["From"] = f"LearnHub <{EMAIL_ADDRESS}>"
-        msg["To"] = to_email
-        msg["Subject"] = subject
-        html = f"""
+
+        # Brevo API endpoint
+        url = "https://api.brevo.com/v3/smtp/email"
+        
+        # Email HTML content
+        html_content = f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -819,32 +839,58 @@ def send_email(to_email, subject, body):
         </body>
         </html>
         """
-        msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
-        print(f"📤 Successfully sent: {subject} to {to_email}")
-        return True
+
+        # Prepare the payload for Brevo
+        payload = {
+            "sender": {
+                "name": BREVO_SENDER_NAME,
+                "email": BREVO_SENDER_EMAIL
+            },
+            "to": [
+                {
+                    "email": to_email,
+                    "name": to_email.split('@')[0]  # Use email prefix as name
+                }
+            ],
+            "subject": subject,
+            "htmlContent": html_content
+        }
+
+        # Headers for Brevo API
+        headers = {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "api-key": BREVO_API_KEY
+        }
+
+        # Make the API request
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        
+        if response.status_code == 201:
+            print(f"📤 Successfully sent via Brevo: {subject} to {to_email}")
+            return True
+        else:
+            print(f"❌ Brevo API error {response.status_code}: {response.text}")
+            return False
+
     except Exception as e:
-        print(f"❌ Error sending email: {str(e)}")
+        print(f"❌ Error sending email via Brevo: {str(e)}")
         return False
 
-def scheduled_job(email, course, part, days):  # Add days parameter
+def send_email(to_email, subject, body):
+    """
+    Main email sending function - uses Brevo
+    """
+    return send_email_brevo(to_email, subject, body)
+
+def scheduled_job(email, course, part, days):
     try:
-        content = generate_daily_content(course, part, days)  # Pass days to generate_daily_content
+        content = generate_daily_content(course, part, days)
         if send_email(email, f"{course} - Day {part}", content):
             increment_progress(email, course)
     except Exception as e:
         print(f"Failed to send day {part} email: {str(e)}")
-        
-def check_smtp_port():
-    try:
-        socket.create_connection(("smtp.gmail.com", 587), timeout=10)
-        return "Port 587 is open!"
-    except Exception as e:
-        return f"Port blocked: {e}"
 
-print(check_smtp_port())
 def remove_existing_jobs(email, course):
     for job in scheduler.get_jobs():
         if job.id.startswith(f"{email}_{course}_"):
@@ -880,7 +926,7 @@ def schedule_course(email, course, days, time_str):
                 scheduled_job,
                 'date',
                 run_date=scheduled_time,
-                args=[email, course, i, days],  # Add days to args
+                args=[email, course, i, days],
                 id=job_id,
                 replace_existing=True
             )
@@ -984,7 +1030,6 @@ def signup():
     email = request.form["email"].strip()
     password = request.form["password"]
 
-    # Hash password here if needed
     try:
         conn = sqlite3.connect("userform.db")
         cur = conn.cursor()
@@ -993,7 +1038,7 @@ def signup():
         conn.commit()
         conn.close()
 
-        session["email"] = email  # Save email in session
+        session["email"] = email
         return redirect(url_for("schedule_form"))
     except Exception as e:
         return f"Signup failed: {str(e)}"
@@ -1008,16 +1053,14 @@ def certificate():
     date = datetime.now().strftime("%B %d, %Y")
 
     try:
-        # Connect to the same MySQL DB used by your PHP code
         conn = mysql.connector.connect(
             host="sql104.infinityfree.com",
-            user="if0_40043007",         # Use your MySQL username (default for XAMPP is 'root')
-            password="FQM4N2z8L7ai9",         # Use your MySQL password (blank if using default XAMPP)
-            database="if0_40043007_db"  # Your database name
+            user="if0_40043007",
+            password="FQM4N2z8L7ai9",
+            database="if0_40043007_db"
         )
 
         cur = conn.cursor()
-        # Look up the user name using the email from session
         cur.execute("SELECT name FROM usertable WHERE email = %s", (email,))
         result = cur.fetchone()
         name = result[0] if result else email.split("@")[0]
@@ -1027,13 +1070,10 @@ def certificate():
 
     except Exception as e:
         print("❌ Error fetching name from MySQL:", e)
-        name = email.split("@")[0]  # fallback to email prefix
+        name = email.split("@")[0]
 
     return render_template("cert.html", name=name, course=course, date=date)
 
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
-
-
-
