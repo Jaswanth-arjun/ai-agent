@@ -18,7 +18,7 @@ import mysql.connector
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 465
 EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
-EMAIL_PASSWORD = "xwmcygkwtdalhavi"
+EMAIL_PASSWORD = "trzhksposgcmtbf"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
 
 # === Setup Together client ===
@@ -1025,3 +1025,4 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
