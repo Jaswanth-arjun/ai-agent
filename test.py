@@ -15,7 +15,9 @@ from datetime import datetime, timedelta
 import mysql.connector
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
+from dotenv import load_dotenv
 
+load_dotenv()
 # === CONFIGURATION ===
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 465
@@ -782,7 +784,7 @@ Include in Lesson {part}:
     return response.choices[0].message.content.strip()
 
   # Replace with your actual Brevo API key
-
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY")
 def send_email(to_email, subject, body):
     configuration = sib_api_v3_sdk.Configuration()
     configuration.api_key['api-key'] = BREVO_API_KEY
@@ -999,4 +1001,5 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
 
