@@ -18,13 +18,17 @@ from sib_api_v3_sdk.rest import ApiException
 from dotenv import load_dotenv
 
 load_dotenv()
+
 # === CONFIGURATION ===
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 465
 EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
 EMAIL_PASSWORD = "xwmcygkwtdalhavi"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
-BREVO_API_KEY = os.environ.get("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", "")
+
+# === BREVO CONFIGURATION - FIXED ===
+BREVO_API_KEY = "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"
+
 # === Setup Together client ===
 together = Together(api_key=TOGETHER_API_KEY)
 
@@ -48,7 +52,180 @@ def get_progress(email, course):
 def reset_progress(email, course):
     progress_store[(email, course)] = 0
 
-# === Combined HTML Template ===
+# === FIXED EMAIL FUNCTION ===
+def send_email(to_email, subject, body):
+    """Send email using Brevo API with proper configuration"""
+    try:
+        # Configure Brevo API
+        configuration = sib_api_v3_sdk.Configuration()
+        configuration.api_key['api-key'] = BREVO_API_KEY
+        
+        # Create API instance
+        api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
+        
+        # Create email with proper sender (use your verified Brevo email)
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+            to=[{"email": to_email}],
+            sender={"email": "nellurujaswanth2004@gmail.com", "name": "LearnHub"},
+            subject=subject,
+            html_content=body
+        )
+        
+        # Send email
+        api_response = api_instance.send_transac_email(send_smtp_email)
+        print(f"📤 Successfully sent: {subject} to {to_email}")
+        print(f"📧 Message ID: {api_response.message_id}")
+        return True
+        
+    except ApiException as e:
+        print(f"❌ Brevo API Error: {e}")
+        print(f"❌ Error details: {e.body if hasattr(e, 'body') else 'No details'}")
+        
+        # Fallback to SMTP if Brevo fails
+        print("🔄 Trying SMTP fallback...")
+        return send_email_smtp_fallback(to_email, subject, body)
+        
+    except Exception as e:
+        print(f"❌ Unexpected error with Brevo: {str(e)}")
+        
+        # Fallback to SMTP
+        print("🔄 Trying SMTP fallback...")
+        return send_email_smtp_fallback(to_email, subject, body)
+
+def send_email_smtp_fallback(to_email, subject, body):
+    """Fallback email sending using SMTP"""
+    try:
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_ADDRESS
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        
+        # Add HTML body
+        msg.attach(MIMEText(body, 'html'))
+        
+        # Send via SMTP
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.send_message(msg)
+        
+        print(f"📤 SMTP Fallback: Successfully sent to {to_email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ SMTP Fallback also failed: {str(e)}")
+        return False
+
+# Rest of your functions remain the same...
+def generate_daily_content(course, part, days):
+    if days == 1:
+        prompt = f"""
+You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
+
+Include all of the following in your response:
+
+1. 📘 **Course Title**
+2. 🧠 **Complete Explanation with Real-World Examples**
+   - Cover all major concepts a beginner should know.
+   - Include relevant examples and clear breakdowns.
+3. ✍️ **Practical Exercises**
+   - Add 3–5 hands-on tasks or projects.
+4. 📌 **Key Takeaways**
+   - Summarize essential points to remember.
+5. 🔗 **Curated Resource Links**
+   - Provide 3–5 helpful links to tutorials, videos, or documentation.
+6. 📝 **Format Everything in Markdown**
+   - Use proper headers (`#`), bullet points, and code blocks (```).
+
+Make sure the course is complete and self-contained.
+"""
+    else:
+        prompt = f"""
+You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in {days} days. Divide the topic into {days} structured lessons. Now generate **Lesson {part} of {days}**.
+
+Strictly generate only **Lesson {part}**, not others.
+
+Include in Lesson {part}:
+
+1. 📘 **Lesson Title**
+2. 🧠 **Focused Explanation with Real Examples**
+   - Teach one part of the topic clearly.
+3. ✍️ **2–3 Practical Exercises**
+4. 📌 **3–5 Key Takeaways**
+5. 🔗 **2–3 Curated Resource Links**
+6. 📝 **Markdown Formatting**
+   - Use headers, bullets, and code blocks as needed.
+
+🛑 Do NOT include other parts or summaries. Focus only on Lesson {part}.
+"""
+
+    response = together.chat.completions.create(
+        model="meta-llama/Llama-3-70b-chat-hf",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=1500
+    )
+    return response.choices[0].message.content.strip()
+
+def scheduled_job(email, course, part, days):
+    try:
+        content = generate_daily_content(course, part, days)
+        if send_email(email, f"{course} - Day {part}", content):
+            increment_progress(email, course)
+    except Exception as e:
+        print(f"Failed to send day {part} email: {str(e)}")
+
+def remove_existing_jobs(email, course):
+    for job in scheduler.get_jobs():
+        if job.id.startswith(f"{email}_{course}_"):
+            try:
+                scheduler.remove_job(job.id)
+            except:
+                pass
+
+def schedule_course(email, course, days, time_str):
+    try:
+        now = datetime.now()
+        # Convert AM/PM time to 24-hour format for scheduling
+        time_obj = datetime.strptime(time_str, "%I:%M %p")
+        hour = time_obj.hour
+        minute = time_obj.minute
+        
+        remove_existing_jobs(email, course)
+        
+        welcome_content = (
+            f"Welcome to <b>{course}</b>!<br><br>"
+            "You will receive daily lessons in your inbox. Let's start learning!"
+        )
+        
+        if not send_email(email, f"Welcome to {course}!", welcome_content):
+            raise Exception("Failed to send welcome email")
+            
+        for i in range(1, days + 1):
+            scheduled_time = now + timedelta(days=i-1)
+            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
+            
+            job_id = f"{email}_{course}_day{i}"
+            scheduler.add_job(
+                scheduled_job,
+                'date',
+                run_date=scheduled_time,
+                args=[email, course, i, days],
+                id=job_id,
+                replace_existing=True
+            )
+            print(f"📅 Scheduled Day {i} email at {scheduled_time}")
+            
+        reset_progress(email, course)
+        session['email'] = email
+        session['course'] = course
+        session['total_days'] = int(days)
+        return True
+    except Exception as e:
+        print(f"Failed to schedule course: {str(e)}")
+        return False
+
+# Your HTML template and routes remain exactly the same...
 FULL_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -733,135 +910,6 @@ FULL_TEMPLATE = '''
 </html>
 '''
 
-def generate_daily_content(course, part, days):  # Add days parameter
-    if days == 1:
-        prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
-
-Include all of the following in your response:
-
-1. 📘 **Course Title**
-2. 🧠 **Complete Explanation with Real-World Examples**
-   - Cover all major concepts a beginner should know.
-   - Include relevant examples and clear breakdowns.
-3. ✍️ **Practical Exercises**
-   - Add 3–5 hands-on tasks or projects.
-4. 📌 **Key Takeaways**
-   - Summarize essential points to remember.
-5. 🔗 **Curated Resource Links**
-   - Provide 3–5 helpful links to tutorials, videos, or documentation.
-6. 📝 **Format Everything in Markdown**
-   - Use proper headers (`#`), bullet points, and code blocks (```).
-
-Make sure the course is complete and self-contained.
-"""
-    else:
-        prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in {days} days. Divide the topic into {days} structured lessons. Now generate **Lesson {part} of {days}**.
-
-Strictly generate only **Lesson {part}**, not others.
-
-Include in Lesson {part}:
-
-1. 📘 **Lesson Title**
-2. 🧠 **Focused Explanation with Real Examples**
-   - Teach one part of the topic clearly.
-3. ✍️ **2–3 Practical Exercises**
-4. 📌 **3–5 Key Takeaways**
-5. 🔗 **2–3 Curated Resource Links**
-6. 📝 **Markdown Formatting**
-   - Use headers, bullets, and code blocks as needed.
-
-🛑 Do NOT include other parts or summaries. Focus only on Lesson {part}.
-"""
-
-    response = together.chat.completions.create(
-        model="meta-llama/Llama-3-70b-chat-hf",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=1500
-    )
-    return response.choices[0].message.content.strip()
-
-  # Replace with your actual Brevo API key
-BREVO_API_KEY = os.environ.get("BREVO_API_KEY")
-def send_email(to_email, subject, body):
-    configuration = sib_api_v3_sdk.Configuration()
-    configuration.api_key['api-key'] = BREVO_API_KEY
-
-    api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
-    send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-        to=[{"email": to_email}],
-        sender={"email": "nellurujaswanth2004@gmail.com", "name": "LearnHub"},
-        subject=subject,
-        html_content=body
-    )
-    try:
-        api_response = api_instance.send_transac_email(send_smtp_email)
-        print(f"📤 Successfully sent: {subject} to {to_email}")
-        return True
-    except ApiException as e:
-        print(f"❌ Error sending email: {e}")
-        return False
-
-def scheduled_job(email, course, part, days):  # Add days parameter
-    try:
-        content = generate_daily_content(course, part, days)  # Pass days to generate_daily_content
-        if send_email(email, f"{course} - Day {part}", content):
-            increment_progress(email, course)
-    except Exception as e:
-        print(f"Failed to send day {part} email: {str(e)}")
-
-def remove_existing_jobs(email, course):
-    for job in scheduler.get_jobs():
-        if job.id.startswith(f"{email}_{course}_"):
-            try:
-                scheduler.remove_job(job.id)
-            except:
-                pass
-
-def schedule_course(email, course, days, time_str):
-    try:
-        now = datetime.now()
-        # Convert AM/PM time to 24-hour format for scheduling
-        time_obj = datetime.strptime(time_str, "%I:%M %p")
-        hour = time_obj.hour
-        minute = time_obj.minute
-        
-        remove_existing_jobs(email, course)
-        
-        welcome_content = (
-            f"Welcome to <b>{course}</b>!<br><br>"
-            "You will receive daily lessons in your inbox. Let's start learning!"
-        )
-        
-        if not send_email(email, f"Welcome to {course}!", welcome_content):
-            raise Exception("Failed to send welcome email")
-            
-        for i in range(1, days + 1):
-            scheduled_time = now + timedelta(days=i-1)
-            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
-            
-            job_id = f"{email}_{course}_day{i}"
-            scheduler.add_job(
-                scheduled_job,
-                'date',
-                run_date=scheduled_time,
-                args=[email, course, i, days],  # Add days to args
-                id=job_id,
-                replace_existing=True
-            )
-            print(f"📅 Scheduled Day {i} email at {scheduled_time}")
-            
-        reset_progress(email, course)
-        session['email'] = email
-        session['course'] = course
-        session['total_days'] = int(days)
-        return True
-    except Exception as e:
-        print(f"Failed to schedule course: {str(e)}")
-        return False
-
 @app.route('/', methods=['GET', 'POST'])
 def select_course():
     if request.method == "POST":
@@ -977,10 +1025,10 @@ def certificate():
     try:
         # Connect to the same MySQL DB used by your PHP code
         conn = mysql.connector.connect(
-            host="localhost",
-            user="root",         # Use your MySQL username (default for XAMPP is 'root')
-            password="",         # Use your MySQL password (blank if using default XAMPP)
-            database="userform"  # Your database name
+            host="sql104.infinityfree.com",
+            user="if0_40043007",         # Use your MySQL username (default for XAMPP is 'root')
+            password="FQM4N2z8L7ai9",         # Use your MySQL password (blank if using default XAMPP)
+            database="if0_40043007_db"  # Your database name
         )
 
         cur = conn.cursor()
@@ -1001,7 +1049,3 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
-
-
-
-
