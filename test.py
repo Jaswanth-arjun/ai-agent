@@ -18,7 +18,7 @@ import mysql.connector
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 465
 EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
-EMAIL_PASSWORD = "mcilyaehoztsvewa"
+EMAIL_PASSWORD = "xwmcygkwtdalhavi"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
 
 # === Setup Together client ===
@@ -45,7 +45,7 @@ def reset_progress(email, course):
     progress_store[(email, course)] = 0
 
 # === Combined HTML Template ===
-FULL_TEMPLATE =r'''
+FULL_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1001,10 +1001,10 @@ def certificate():
     try:
         # Connect to the same MySQL DB used by your PHP code
         conn = mysql.connector.connect(
-            host="sql204.infinityfree.com",
-            user="if0_39319921",         # Use your MySQL username (default for XAMPP is 'root')
-            password="lftObNsEpn4a",         # Use your MySQL password (blank if using default XAMPP)
-            database="if0_39319921_db"  # Your database name
+            host="localhost",
+            user="root",         # Use your MySQL username (default for XAMPP is 'root')
+            password="",         # Use your MySQL password (blank if using default XAMPP)
+            database="userform"  # Your database name
         )
 
         cur = conn.cursor()
@@ -1023,6 +1023,5 @@ def certificate():
     return render_template("cert.html", name=name, course=course, date=date)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))  # Use Render's port if available
     scheduler.start()
-    app.run(debug=True, host='0.0.0.0', port=port, use_reloader=False)
+    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
