@@ -13,6 +13,8 @@ from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
 from datetime import datetime, timedelta
 import mysql.connector
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
 
 # === CONFIGURATION ===
 SMTP_SERVER = "smtp.gmail.com"
@@ -779,53 +781,25 @@ Include in Lesson {part}:
     )
     return response.choices[0].message.content.strip()
 
+  # Replace with your actual Brevo API key
+
 def send_email(to_email, subject, body):
+    configuration = sib_api_v3_sdk.Configuration()
+    configuration.api_key['api-key'] = BREVO_API_KEY
+
+    api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
+    send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+        to=[{"email": to_email}],
+        sender={"email": "nellurujaswanth2004@gmail.com", "name": "LearnHub"},
+        subject=subject,
+        html_content=body
+    )
     try:
-        if not to_email or "@" not in to_email:
-            print(f"❌ Invalid email address: {to_email}")
-            return False
-        msg = MIMEMultipart()
-        msg["From"] = f"LearnHub <{EMAIL_ADDRESS}>"
-        msg["To"] = to_email
-        msg["Subject"] = subject
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <style>
-                body {{ font-family: 'Poppins', sans-serif; line-height: 1.6; color: #333; }}
-                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
-                .content {{ padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }}
-                .button {{ display: inline-block; padding: 10px 20px; background: #4361ee; color: white; text-decoration: none; border-radius: 5px; margin-top: 15px; }}
-                .footer {{ margin-top: 20px; text-align: center; font-size: 12px; color: #777; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>LearnHub Daily Lesson</h1>
-                    <p>Your personalized learning journey</p>
-                </div>
-                <div class="content">
-                    {body.replace('\n', '<br>')}
-                    <div class="footer">
-                        <p>You received this email because you signed up for a course on LearnHub.</p>
-                        <p><a href="#" style="color: #4361ee;">Unsubscribe</a> | <a href="#" style="color: #4361ee;">Preferences</a></p>
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
+        api_response = api_instance.send_transac_email(send_smtp_email)
         print(f"📤 Successfully sent: {subject} to {to_email}")
         return True
-    except Exception as e:
-        print(f"❌ Error sending email: {str(e)}")
+    except ApiException as e:
+        print(f"❌ Error sending email: {e}")
         return False
 
 def scheduled_job(email, course, part, days):  # Add days parameter
@@ -1025,3 +999,4 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
