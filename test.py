@@ -13,21 +13,14 @@ from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
 from datetime import datetime, timedelta
 import mysql.connector
-import sib_api_v3_sdk
-from sib_api_v3_sdk.rest import ApiException
-from dotenv import load_dotenv
-
-load_dotenv()
+import ssl
 
 # === CONFIGURATION ===
 SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 465
+SMTP_PORT = 587  # Changed to 587 for TLS
 EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
 EMAIL_PASSWORD = "xwmcygkwtdalhavi"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
-
-# === BREVO CONFIGURATION - FIXED ===
-BREVO_API_KEY = "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"
 
 # === Setup Together client ===
 together = Together(api_key=TOGETHER_API_KEY)
@@ -38,8 +31,8 @@ app.secret_key = os.urandom(24)
 csrf = CSRFProtect(app)
 scheduler = BackgroundScheduler()
 
-# === GLOBAL PROGRESS STORE (for demo/testing; use a DB for production) ===
-progress_store = {}  # key: (email, course), value: int (completed days)
+# === GLOBAL PROGRESS STORE ===
+progress_store = {}
 
 def increment_progress(email, course):
     key = (email, course)
@@ -52,48 +45,9 @@ def get_progress(email, course):
 def reset_progress(email, course):
     progress_store[(email, course)] = 0
 
-# === FIXED EMAIL FUNCTION ===
+# === SIMPLIFIED EMAIL FUNCTION ===
 def send_email(to_email, subject, body):
-    """Send email using Brevo API with proper configuration"""
-    try:
-        # Configure Brevo API
-        configuration = sib_api_v3_sdk.Configuration()
-        configuration.api_key['api-key'] = BREVO_API_KEY
-        
-        # Create API instance
-        api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
-        
-        # Create email with proper sender (use your verified Brevo email)
-        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-            to=[{"email": to_email}],
-            sender={"email": "nellurujaswanth2004@gmail.com", "name": "LearnHub"},
-            subject=subject,
-            html_content=body
-        )
-        
-        # Send email
-        api_response = api_instance.send_transac_email(send_smtp_email)
-        print(f"📤 Successfully sent: {subject} to {to_email}")
-        print(f"📧 Message ID: {api_response.message_id}")
-        return True
-        
-    except ApiException as e:
-        print(f"❌ Brevo API Error: {e}")
-        print(f"❌ Error details: {e.body if hasattr(e, 'body') else 'No details'}")
-        
-        # Fallback to SMTP if Brevo fails
-        print("🔄 Trying SMTP fallback...")
-        return send_email_smtp_fallback(to_email, subject, body)
-        
-    except Exception as e:
-        print(f"❌ Unexpected error with Brevo: {str(e)}")
-        
-        # Fallback to SMTP
-        print("🔄 Trying SMTP fallback...")
-        return send_email_smtp_fallback(to_email, subject, body)
-
-def send_email_smtp_fallback(to_email, subject, body):
-    """Fallback email sending using SMTP"""
+    """Send email using SMTP with proper error handling"""
     try:
         # Create message
         msg = MIMEMultipart()
@@ -104,19 +58,141 @@ def send_email_smtp_fallback(to_email, subject, body):
         # Add HTML body
         msg.attach(MIMEText(body, 'html'))
         
-        # Send via SMTP
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+        # Create secure SSL context
+        context = ssl.create_default_context()
+        
+        # Try to send via SMTP with TLS
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.ehlo()  # Can be omitted
+            server.starttls(context=context)  # Secure the connection
+            server.ehlo()  # Can be omitted
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
+        
+        print(f"✅ Email sent successfully: {subject} to {to_email}")
+        return True
+        
+    except smtplib.SMTPAuthenticationError:
+        print(f"❌ SMTP Authentication failed. Check your email credentials.")
+        return False
+    except smtplib.SMTPException as e:
+        print(f"❌ SMTP error occurred: {str(e)}")
+        return False
+    except Exception as e:
+        print(f"❌ Unexpected error sending email: {str(e)}")
+        return False
+
+# Alternative SMTP function if the above doesn't work
+def send_email_alternative(to_email, subject, body):
+    """Alternative SMTP method using SSL"""
+    try:
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_ADDRESS
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'html'))
+        
+        # Use SSL instead of TLS
+        with smtplib.SMTP_SSL(SMTP_SERVER, 465) as server:
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.send_message(msg)
         
-        print(f"📤 SMTP Fallback: Successfully sent to {to_email}")
+        print(f"✅ Email sent (SSL method): {subject} to {to_email}")
+        return True
+    except Exception as e:
+        print(f"❌ Alternative SMTP also failed: {str(e)}")
+        return False
+
+# Main email function that tries both methods
+def send_email_final(to_email, subject, body):
+    """Final email function that tries multiple methods"""
+    print(f"📧 Attempting to send email to: {to_email}")
+    
+    # Try primary SMTP method
+    if send_email(to_email, subject, body):
+        return True
+    
+    # If primary fails, try alternative method
+    print("🔄 Primary method failed, trying alternative SMTP...")
+    if send_email_alternative(to_email, subject, body):
+        return True
+    
+    print("❌ All email methods failed")
+    return False
+
+# Update your scheduled_job function to use the new email function
+def scheduled_job(email, course, part, days):
+    try:
+        content = generate_daily_content(course, part, days)
+        if send_email_final(email, f"{course} - Day {part}", content):
+            increment_progress(email, course)
+            print(f"✅ Successfully processed day {part} for {email}")
+        else:
+            print(f"❌ Failed to send day {part} email to {email}")
+    except Exception as e:
+        print(f"❌ Error in scheduled_job: {str(e)}")
+
+# Update your schedule_course function
+def schedule_course(email, course, days, time_str):
+    try:
+        now = datetime.now()
+        # Convert AM/PM time to 24-hour format for scheduling
+        time_obj = datetime.strptime(time_str, "%I:%M %p")
+        hour = time_obj.hour
+        minute = time_obj.minute
+        
+        remove_existing_jobs(email, course)
+        
+        welcome_content = f"""
+        <html>
+        <body>
+            <h2>Welcome to {course}!</h2>
+            <p>Your learning journey begins now. You will receive daily lessons in your inbox.</p>
+            <p><strong>Course:</strong> {course}</p>
+            <p><strong>Duration:</strong> {days} days</p>
+            <p><strong>Daily Time:</strong> {time_str}</p>
+            <br>
+            <p>Get ready to learn and grow!</p>
+            <p>- The LearnHub Team</p>
+        </body>
+        </html>
+        """
+        
+        print(f"🔄 Sending welcome email to {email}...")
+        if not send_email_final(email, f"Welcome to {course}!", welcome_content):
+            # If welcome email fails, we'll still schedule the course but log the issue
+            print(f"⚠️ Welcome email failed, but continuing with scheduling...")
+        
+        # Schedule the daily emails
+        for i in range(1, days + 1):
+            scheduled_time = now + timedelta(days=i-1)
+            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
+            
+            job_id = f"{email}_{course}_day{i}"
+            scheduler.add_job(
+                scheduled_job,
+                'date',
+                run_date=scheduled_time,
+                args=[email, course, i, days],
+                id=job_id,
+                replace_existing=True
+            )
+            print(f"📅 Scheduled Day {i} email at {scheduled_time}")
+            
+        reset_progress(email, course)
+        session['email'] = email
+        session['course'] = course
+        session['total_days'] = int(days)
+        
+        print(f"✅ Course scheduled successfully for {email}")
         return True
         
     except Exception as e:
-        print(f"❌ SMTP Fallback also failed: {str(e)}")
+        print(f"❌ Failed to schedule course: {str(e)}")
         return False
 
-# Rest of your functions remain the same...
+# Your existing functions remain the same...
 def generate_daily_content(course, part, days):
     if days == 1:
         prompt = f"""
@@ -167,14 +243,6 @@ Include in Lesson {part}:
     )
     return response.choices[0].message.content.strip()
 
-def scheduled_job(email, course, part, days):
-    try:
-        content = generate_daily_content(course, part, days)
-        if send_email(email, f"{course} - Day {part}", content):
-            increment_progress(email, course)
-    except Exception as e:
-        print(f"Failed to send day {part} email: {str(e)}")
-
 def remove_existing_jobs(email, course):
     for job in scheduler.get_jobs():
         if job.id.startswith(f"{email}_{course}_"):
@@ -182,48 +250,6 @@ def remove_existing_jobs(email, course):
                 scheduler.remove_job(job.id)
             except:
                 pass
-
-def schedule_course(email, course, days, time_str):
-    try:
-        now = datetime.now()
-        # Convert AM/PM time to 24-hour format for scheduling
-        time_obj = datetime.strptime(time_str, "%I:%M %p")
-        hour = time_obj.hour
-        minute = time_obj.minute
-        
-        remove_existing_jobs(email, course)
-        
-        welcome_content = (
-            f"Welcome to <b>{course}</b>!<br><br>"
-            "You will receive daily lessons in your inbox. Let's start learning!"
-        )
-        
-        if not send_email(email, f"Welcome to {course}!", welcome_content):
-            raise Exception("Failed to send welcome email")
-            
-        for i in range(1, days + 1):
-            scheduled_time = now + timedelta(days=i-1)
-            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
-            
-            job_id = f"{email}_{course}_day{i}"
-            scheduler.add_job(
-                scheduled_job,
-                'date',
-                run_date=scheduled_time,
-                args=[email, course, i, days],
-                id=job_id,
-                replace_existing=True
-            )
-            print(f"📅 Scheduled Day {i} email at {scheduled_time}")
-            
-        reset_progress(email, course)
-        session['email'] = email
-        session['course'] = course
-        session['total_days'] = int(days)
-        return True
-    except Exception as e:
-        print(f"Failed to schedule course: {str(e)}")
-        return False
 
 # Your HTML template and routes remain exactly the same...
 FULL_TEMPLATE = '''
@@ -910,6 +936,7 @@ FULL_TEMPLATE = '''
 </html>
 '''
 
+# Your routes remain exactly the same...
 @app.route('/', methods=['GET', 'POST'])
 def select_course():
     if request.method == "POST":
@@ -999,7 +1026,6 @@ def signup():
     email = request.form["email"].strip()
     password = request.form["password"]
 
-    # Hash password here if needed
     try:
         conn = sqlite3.connect("userform.db")
         cur = conn.cursor()
@@ -1008,7 +1034,7 @@ def signup():
         conn.commit()
         conn.close()
 
-        session["email"] = email  # Save email in session
+        session["email"] = email
         return redirect(url_for("schedule_form"))
     except Exception as e:
         return f"Signup failed: {str(e)}"
@@ -1023,16 +1049,14 @@ def certificate():
     date = datetime.now().strftime("%B %d, %Y")
 
     try:
-        # Connect to the same MySQL DB used by your PHP code
         conn = mysql.connector.connect(
             host="sql104.infinityfree.com",
-            user="if0_40043007",         # Use your MySQL username (default for XAMPP is 'root')
-            password="FQM4N2z8L7ai9",         # Use your MySQL password (blank if using default XAMPP)
-            database="if0_40043007_db"  # Your database name
+            user="	if0_40043007",
+            password="FQM4N2z8L7ai9",
+            database="if0_40043007_db"
         )
 
         cur = conn.cursor()
-        # Look up the user name using the email from session
         cur.execute("SELECT name FROM usertable WHERE email = %s", (email,))
         result = cur.fetchone()
         name = result[0] if result else email.split("@")[0]
@@ -1042,7 +1066,7 @@ def certificate():
 
     except Exception as e:
         print("❌ Error fetching name from MySQL:", e)
-        name = email.split("@")[0]  # fallback to email prefix
+        name = email.split("@")[0]
 
     return render_template("cert.html", name=name, course=course, date=date)
 
