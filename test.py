@@ -24,7 +24,7 @@ SMTP_PORT = 465
 EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
 EMAIL_PASSWORD = "xwmcygkwtdalhavi"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
-BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "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")
+BREVO_API_KEY = os.environ.get("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", "")
 # === Setup Together client ===
 together = Together(api_key=TOGETHER_API_KEY)
 
@@ -1001,6 +1001,7 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
 
 
 
