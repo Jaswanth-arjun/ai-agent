@@ -13,11 +13,10 @@ from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
 from datetime import datetime, timedelta
 import mysql.connector
-import ssl
 
 # === CONFIGURATION ===
 SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587  # Changed to 587 for TLS
+SMTP_PORT = 465
 EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
 EMAIL_PASSWORD = "xwmcygkwtdalhavi"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
@@ -31,8 +30,8 @@ app.secret_key = os.urandom(24)
 csrf = CSRFProtect(app)
 scheduler = BackgroundScheduler()
 
-# === GLOBAL PROGRESS STORE ===
-progress_store = {}
+# === GLOBAL PROGRESS STORE (for demo/testing; use a DB for production) ===
+progress_store = {}  # key: (email, course), value: int (completed days)
 
 def increment_progress(email, course):
     key = (email, course)
@@ -45,213 +44,7 @@ def get_progress(email, course):
 def reset_progress(email, course):
     progress_store[(email, course)] = 0
 
-# === SIMPLIFIED EMAIL FUNCTION ===
-def send_email(to_email, subject, body):
-    """Send email using SMTP with proper error handling"""
-    try:
-        # Create message
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_ADDRESS
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        
-        # Add HTML body
-        msg.attach(MIMEText(body, 'html'))
-        
-        # Create secure SSL context
-        context = ssl.create_default_context()
-        
-        # Try to send via SMTP with TLS
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.ehlo()  # Can be omitted
-            server.starttls(context=context)  # Secure the connection
-            server.ehlo()  # Can be omitted
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
-        
-        print(f"✅ Email sent successfully: {subject} to {to_email}")
-        return True
-        
-    except smtplib.SMTPAuthenticationError:
-        print(f"❌ SMTP Authentication failed. Check your email credentials.")
-        return False
-    except smtplib.SMTPException as e:
-        print(f"❌ SMTP error occurred: {str(e)}")
-        return False
-    except Exception as e:
-        print(f"❌ Unexpected error sending email: {str(e)}")
-        return False
-
-# Alternative SMTP function if the above doesn't work
-def send_email_alternative(to_email, subject, body):
-    """Alternative SMTP method using SSL"""
-    try:
-        # Create message
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_ADDRESS
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'html'))
-        
-        # Use SSL instead of TLS
-        with smtplib.SMTP_SSL(SMTP_SERVER, 465) as server:
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.send_message(msg)
-        
-        print(f"✅ Email sent (SSL method): {subject} to {to_email}")
-        return True
-    except Exception as e:
-        print(f"❌ Alternative SMTP also failed: {str(e)}")
-        return False
-
-# Main email function that tries both methods
-def send_email_final(to_email, subject, body):
-    """Final email function that tries multiple methods"""
-    print(f"📧 Attempting to send email to: {to_email}")
-    
-    # Try primary SMTP method
-    if send_email(to_email, subject, body):
-        return True
-    
-    # If primary fails, try alternative method
-    print("🔄 Primary method failed, trying alternative SMTP...")
-    if send_email_alternative(to_email, subject, body):
-        return True
-    
-    print("❌ All email methods failed")
-    return False
-
-# Update your scheduled_job function to use the new email function
-def scheduled_job(email, course, part, days):
-    try:
-        content = generate_daily_content(course, part, days)
-        if send_email_final(email, f"{course} - Day {part}", content):
-            increment_progress(email, course)
-            print(f"✅ Successfully processed day {part} for {email}")
-        else:
-            print(f"❌ Failed to send day {part} email to {email}")
-    except Exception as e:
-        print(f"❌ Error in scheduled_job: {str(e)}")
-
-# Update your schedule_course function
-def schedule_course(email, course, days, time_str):
-    try:
-        now = datetime.now()
-        # Convert AM/PM time to 24-hour format for scheduling
-        time_obj = datetime.strptime(time_str, "%I:%M %p")
-        hour = time_obj.hour
-        minute = time_obj.minute
-        
-        remove_existing_jobs(email, course)
-        
-        welcome_content = f"""
-        <html>
-        <body>
-            <h2>Welcome to {course}!</h2>
-            <p>Your learning journey begins now. You will receive daily lessons in your inbox.</p>
-            <p><strong>Course:</strong> {course}</p>
-            <p><strong>Duration:</strong> {days} days</p>
-            <p><strong>Daily Time:</strong> {time_str}</p>
-            <br>
-            <p>Get ready to learn and grow!</p>
-            <p>- The LearnHub Team</p>
-        </body>
-        </html>
-        """
-        
-        print(f"🔄 Sending welcome email to {email}...")
-        if not send_email_final(email, f"Welcome to {course}!", welcome_content):
-            # If welcome email fails, we'll still schedule the course but log the issue
-            print(f"⚠️ Welcome email failed, but continuing with scheduling...")
-        
-        # Schedule the daily emails
-        for i in range(1, days + 1):
-            scheduled_time = now + timedelta(days=i-1)
-            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
-            
-            job_id = f"{email}_{course}_day{i}"
-            scheduler.add_job(
-                scheduled_job,
-                'date',
-                run_date=scheduled_time,
-                args=[email, course, i, days],
-                id=job_id,
-                replace_existing=True
-            )
-            print(f"📅 Scheduled Day {i} email at {scheduled_time}")
-            
-        reset_progress(email, course)
-        session['email'] = email
-        session['course'] = course
-        session['total_days'] = int(days)
-        
-        print(f"✅ Course scheduled successfully for {email}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Failed to schedule course: {str(e)}")
-        return False
-
-# Your existing functions remain the same...
-def generate_daily_content(course, part, days):
-    if days == 1:
-        prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
-
-Include all of the following in your response:
-
-1. 📘 **Course Title**
-2. 🧠 **Complete Explanation with Real-World Examples**
-   - Cover all major concepts a beginner should know.
-   - Include relevant examples and clear breakdowns.
-3. ✍️ **Practical Exercises**
-   - Add 3–5 hands-on tasks or projects.
-4. 📌 **Key Takeaways**
-   - Summarize essential points to remember.
-5. 🔗 **Curated Resource Links**
-   - Provide 3–5 helpful links to tutorials, videos, or documentation.
-6. 📝 **Format Everything in Markdown**
-   - Use proper headers (`#`), bullet points, and code blocks (```).
-
-Make sure the course is complete and self-contained.
-"""
-    else:
-        prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in {days} days. Divide the topic into {days} structured lessons. Now generate **Lesson {part} of {days}**.
-
-Strictly generate only **Lesson {part}**, not others.
-
-Include in Lesson {part}:
-
-1. 📘 **Lesson Title**
-2. 🧠 **Focused Explanation with Real Examples**
-   - Teach one part of the topic clearly.
-3. ✍️ **2–3 Practical Exercises**
-4. 📌 **3–5 Key Takeaways**
-5. 🔗 **2–3 Curated Resource Links**
-6. 📝 **Markdown Formatting**
-   - Use headers, bullets, and code blocks as needed.
-
-🛑 Do NOT include other parts or summaries. Focus only on Lesson {part}.
-"""
-
-    response = together.chat.completions.create(
-        model="meta-llama/Llama-3-70b-chat-hf",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=1500
-    )
-    return response.choices[0].message.content.strip()
-
-def remove_existing_jobs(email, course):
-    for job in scheduler.get_jobs():
-        if job.id.startswith(f"{email}_{course}_"):
-            try:
-                scheduler.remove_job(job.id)
-            except:
-                pass
-
-# Your HTML template and routes remain exactly the same...
+# === Combined HTML Template ===
 FULL_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -936,7 +729,163 @@ FULL_TEMPLATE = '''
 </html>
 '''
 
-# Your routes remain exactly the same...
+def generate_daily_content(course, part, days):  # Add days parameter
+    if days == 1:
+        prompt = f"""
+You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
+
+Include all of the following in your response:
+
+1. 📘 **Course Title**
+2. 🧠 **Complete Explanation with Real-World Examples**
+   - Cover all major concepts a beginner should know.
+   - Include relevant examples and clear breakdowns.
+3. ✍️ **Practical Exercises**
+   - Add 3–5 hands-on tasks or projects.
+4. 📌 **Key Takeaways**
+   - Summarize essential points to remember.
+5. 🔗 **Curated Resource Links**
+   - Provide 3–5 helpful links to tutorials, videos, or documentation.
+6. 📝 **Format Everything in Markdown**
+   - Use proper headers (`#`), bullet points, and code blocks (```).
+
+Make sure the course is complete and self-contained.
+"""
+    else:
+        prompt = f"""
+You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in {days} days. Divide the topic into {days} structured lessons. Now generate **Lesson {part} of {days}**.
+
+Strictly generate only **Lesson {part}**, not others.
+
+Include in Lesson {part}:
+
+1. 📘 **Lesson Title**
+2. 🧠 **Focused Explanation with Real Examples**
+   - Teach one part of the topic clearly.
+3. ✍️ **2–3 Practical Exercises**
+4. 📌 **3–5 Key Takeaways**
+5. 🔗 **2–3 Curated Resource Links**
+6. 📝 **Markdown Formatting**
+   - Use headers, bullets, and code blocks as needed.
+
+🛑 Do NOT include other parts or summaries. Focus only on Lesson {part}.
+"""
+
+    response = together.chat.completions.create(
+        model="meta-llama/Llama-3-70b-chat-hf",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=1500
+    )
+    return response.choices[0].message.content.strip()
+
+def send_email(to_email, subject, body):
+    try:
+        if not to_email or "@" not in to_email:
+            print(f"❌ Invalid email address: {to_email}")
+            return False
+        msg = MIMEMultipart()
+        msg["From"] = f"LearnHub <{EMAIL_ADDRESS}>"
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: 'Poppins', sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
+                .content {{ padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }}
+                .button {{ display: inline-block; padding: 10px 20px; background: #4361ee; color: white; text-decoration: none; border-radius: 5px; margin-top: 15px; }}
+                .footer {{ margin-top: 20px; text-align: center; font-size: 12px; color: #777; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>LearnHub Daily Lesson</h1>
+                    <p>Your personalized learning journey</p>
+                </div>
+                <div class="content">
+                    {body.replace('\n', '<br>')}
+                    <div class="footer">
+                        <p>You received this email because you signed up for a course on LearnHub.</p>
+                        <p><a href="#" style="color: #4361ee;">Unsubscribe</a> | <a href="#" style="color: #4361ee;">Preferences</a></p>
+                    </div>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        msg.attach(MIMEText(html, "html"))
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
+        print(f"📤 Successfully sent: {subject} to {to_email}")
+        return True
+    except Exception as e:
+        print(f"❌ Error sending email: {str(e)}")
+        return False
+
+def scheduled_job(email, course, part, days):  # Add days parameter
+    try:
+        content = generate_daily_content(course, part, days)  # Pass days to generate_daily_content
+        if send_email(email, f"{course} - Day {part}", content):
+            increment_progress(email, course)
+    except Exception as e:
+        print(f"Failed to send day {part} email: {str(e)}")
+
+def remove_existing_jobs(email, course):
+    for job in scheduler.get_jobs():
+        if job.id.startswith(f"{email}_{course}_"):
+            try:
+                scheduler.remove_job(job.id)
+            except:
+                pass
+
+def schedule_course(email, course, days, time_str):
+    try:
+        now = datetime.now()
+        # Convert AM/PM time to 24-hour format for scheduling
+        time_obj = datetime.strptime(time_str, "%I:%M %p")
+        hour = time_obj.hour
+        minute = time_obj.minute
+        
+        remove_existing_jobs(email, course)
+        
+        welcome_content = (
+            f"Welcome to <b>{course}</b>!<br><br>"
+            "You will receive daily lessons in your inbox. Let's start learning!"
+        )
+        
+        if not send_email(email, f"Welcome to {course}!", welcome_content):
+            raise Exception("Failed to send welcome email")
+            
+        for i in range(1, days + 1):
+            scheduled_time = now + timedelta(days=i-1)
+            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
+            
+            job_id = f"{email}_{course}_day{i}"
+            scheduler.add_job(
+                scheduled_job,
+                'date',
+                run_date=scheduled_time,
+                args=[email, course, i, days],  # Add days to args
+                id=job_id,
+                replace_existing=True
+            )
+            print(f"📅 Scheduled Day {i} email at {scheduled_time}")
+            
+        reset_progress(email, course)
+        session['email'] = email
+        session['course'] = course
+        session['total_days'] = int(days)
+        return True
+    except Exception as e:
+        print(f"Failed to schedule course: {str(e)}")
+        return False
+
 @app.route('/', methods=['GET', 'POST'])
 def select_course():
     if request.method == "POST":
@@ -1026,6 +975,7 @@ def signup():
     email = request.form["email"].strip()
     password = request.form["password"]
 
+    # Hash password here if needed
     try:
         conn = sqlite3.connect("userform.db")
         cur = conn.cursor()
@@ -1034,7 +984,7 @@ def signup():
         conn.commit()
         conn.close()
 
-        session["email"] = email
+        session["email"] = email  # Save email in session
         return redirect(url_for("schedule_form"))
     except Exception as e:
         return f"Signup failed: {str(e)}"
@@ -1049,14 +999,17 @@ def certificate():
     date = datetime.now().strftime("%B %d, %Y")
 
     try:
+        # Connect to the same MySQL DB used by your PHP code
         conn = mysql.connector.connect(
-            host="sql104.infinityfree.com",
+             host="sql104.infinityfree.com",
             user="	if0_40043007",
             password="FQM4N2z8L7ai9",
             database="if0_40043007_db"
+  # Your database name
         )
 
         cur = conn.cursor()
+        # Look up the user name using the email from session
         cur.execute("SELECT name FROM usertable WHERE email = %s", (email,))
         result = cur.fetchone()
         name = result[0] if result else email.split("@")[0]
@@ -1066,7 +1019,7 @@ def certificate():
 
     except Exception as e:
         print("❌ Error fetching name from MySQL:", e)
-        name = email.split("@")[0]
+        name = email.split("@")[0]  # fallback to email prefix
 
     return render_template("cert.html", name=name, course=course, date=date)
 
