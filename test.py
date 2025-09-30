@@ -860,6 +860,57 @@ def remove_existing_jobs(email, course):
                 scheduler.remove_job(job.id)
             except:
                 pass
+
+def send_email_brevo(to_email, subject, body):
+    """Use Brevo API instead of SMTP"""
+    try:
+        BREVO_API_KEY = "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"  # Get from brevo.com
+        
+        # Create HTML content
+        html_content = f"""
+        <html>
+            <body>
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <div style="background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 20px; text-align: center;">
+                        <h1>LearnHub Daily Lesson</h1>
+                    </div>
+                    <div style="padding: 20px; background: #f9f9f9;">
+                        {body.replace('\n', '<br>')}
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        
+        url = "https://api.brevo.com/v3/smtp/email"
+        headers = {
+            "accept": "application/json",
+            "api-key": BREVO_API_KEY,
+            "content-type": "application/json"
+        }
+        
+        data = {
+            "sender": {
+                "name": "LearnHub",
+                "email": "nellurujaswanth2004@gmail.com"
+            },
+            "to": [{"email": to_email}],
+            "subject": subject,
+            "htmlContent": html_content
+        }
+        
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code in [200, 201]:
+            print(f"📤 Brevo: Email sent to {to_email}")
+            return True
+        else:
+            print(f"❌ Brevo API error: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Brevo error: {str(e)}")
+        return False                
 def test_email_connection():
     """Test SMTP connection and authentication"""
     try:
@@ -1060,6 +1111,7 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
 
 
 
