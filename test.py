@@ -1001,10 +1001,10 @@ def certificate():
     try:
         # Connect to the same MySQL DB used by your PHP code
         conn = mysql.connector.connect(
-            host="localhost",
-            user="root",         # Use your MySQL username (default for XAMPP is 'root')
-            password="",         # Use your MySQL password (blank if using default XAMPP)
-            database="userform"  # Your database name
+            host="sql104.infinityfree.com",
+            user="if0_40043007",         # Use your MySQL username (default for XAMPP is 'root')
+            password="FQM4N2z8L7ai9",         # Use your MySQL password (blank if using default XAMPP)
+            database="if0_40043007_db"  # Your database name
         )
 
         cur = conn.cursor()
@@ -1025,3 +1025,4 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
