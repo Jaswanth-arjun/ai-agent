@@ -1,9 +1,7 @@
 import os
 import re
-import smtplib
 import sqlite3
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import requests
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, send_file, render_template
 from apscheduler.schedulers.background import BackgroundScheduler
 from together import Together
@@ -13,14 +11,12 @@ from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
 from datetime import datetime, timedelta
 import mysql.connector
-import requests  # Add this import
 
 # === CONFIGURATION ===
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
-EMAIL_PASSWORD = "brhighdyshzknif"
+BREVO_API_KEY = "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"
+RESEND_API_KEY = "re_YqsuT6iy_FdipkYQypG2iHeL28utdFCfT"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
+EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
 
 # === Setup Together client ===
 together = Together(api_key=TOGETHER_API_KEY)
@@ -730,7 +726,7 @@ FULL_TEMPLATE = '''
 </html>
 '''
 
-def generate_daily_content(course, part, days):  # Add days parameter
+def generate_daily_content(course, part, days):
     if days == 1:
         prompt = f"""
 You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
@@ -779,21 +775,28 @@ Include in Lesson {part}:
         max_tokens=1500
     )
     return response.choices[0].message.content.strip()
+
 def send_email_brevo(to_email, subject, body):
-    """Use Brevo API instead of SMTP"""
+    """Use Brevo API for email"""
     try:
-        BREVO_API_KEY = "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"  # Get from brevo.com
+        print(f"📧 Trying Brevo API for {to_email}...")
         
-        # Create HTML content
         html_content = f"""
         <html>
             <body>
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                    <div style="background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 20px; text-align: center;">
-                        <h1>LearnHub Daily Lesson</h1>
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 10px; overflow: hidden;">
+                    <div style="background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 25px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 24px;">LearnHub</h1>
+                        <p style="margin: 5px 0 0 0; opacity: 0.9;">Your Learning Journey</p>
                     </div>
-                    <div style="padding: 20px; background: #f9f9f9;">
-                        {body.replace('\n', '<br>')}
+                    <div style="padding: 25px; background: #ffffff;">
+                        <h2 style="color: #333; margin-top: 0;">{subject}</h2>
+                        <div style="line-height: 1.6; color: #555;">
+                            {body.replace('\n', '<br>')}
+                        </div>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 15px; text-align: center; color: #666; font-size: 12px;">
+                        <p>Sent by LearnHub • <a href="#" style="color: #4361ee;">Unsubscribe</a></p>
                     </div>
                 </div>
             </body>
@@ -820,7 +823,7 @@ def send_email_brevo(to_email, subject, body):
         response = requests.post(url, headers=headers, json=data)
         
         if response.status_code in [200, 201]:
-            print(f"📤 Brevo: Email sent to {to_email}")
+            print(f"✅ Brevo: Email sent to {to_email}")
             return True
         else:
             print(f"❌ Brevo API error: {response.status_code} - {response.text}")
@@ -828,21 +831,29 @@ def send_email_brevo(to_email, subject, body):
             
     except Exception as e:
         print(f"❌ Brevo error: {str(e)}")
-        return False 
+        return False
+
 def send_email_resend(to_email, subject, body):
-    """Use Resend.com API"""
+    """Use Resend.com API for email"""
     try:
-        RESEND_API_KEY = "re_YqsuT6iy_FdipkYQypG2iHeL28utdFCfT"  # Get from resend.com
+        print(f"📧 Trying Resend API for {to_email}...")
         
         html_content = f"""
         <html>
             <body>
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                    <div style="background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 20px; text-align: center;">
-                        <h1>LearnHub Daily Lesson</h1>
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 10px; overflow: hidden;">
+                    <div style="background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 25px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 24px;">LearnHub</h1>
+                        <p style="margin: 5px 0 0 0; opacity: 0.9;">Daily Learning</p>
                     </div>
-                    <div style="padding: 20px; background: #f9f9f9;">
-                        {body.replace('\n', '<br>')}
+                    <div style="padding: 25px; background: #ffffff;">
+                        <h2 style="color: #333; margin-top: 0;">{subject}</h2>
+                        <div style="line-height: 1.6; color: #555;">
+                            {body.replace('\n', '<br>')}
+                        </div>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 15px; text-align: center; color: #666; font-size: 12px;">
+                        <p>You're receiving this because you signed up for a course</p>
                     </div>
                 </div>
             </body>
@@ -865,7 +876,7 @@ def send_email_resend(to_email, subject, body):
         response = requests.post(url, headers=headers, json=data)
         
         if response.status_code == 200:
-            print(f"📤 Resend: Email sent to {to_email}")
+            print(f"✅ Resend: Email sent to {to_email}")
             return True
         else:
             print(f"❌ Resend API error: {response.status_code} - {response.text}")
@@ -874,9 +885,12 @@ def send_email_resend(to_email, subject, body):
     except Exception as e:
         print(f"❌ Resend error: {str(e)}")
         return False
-        
+
 def send_email(to_email, subject, body):
-    """Universal email function that tries multiple methods"""
+    """Universal email function using only APIs"""
+    if not to_email or "@" not in to_email:
+        print(f"❌ Invalid email address: {to_email}")
+        return False
     
     # Method 1: Try Brevo API first
     if send_email_brevo(to_email, subject, body):
@@ -886,76 +900,33 @@ def send_email(to_email, subject, body):
     if send_email_resend(to_email, subject, body):
         return True
     
-    # Method 3: Try SMTP as last resort
-    ports_to_try = [587, 465, 25]
-    for port in ports_to_try:
-        try:
-            print(f"🔧 Trying SMTP port {port}...")
-            
-            if not to_email or "@" not in to_email:
-                print(f"❌ Invalid email address: {to_email}")
-                return False
-            
-            msg = MIMEMultipart()
-            msg["From"] = f"LearnHub <{EMAIL_ADDRESS}>"
-            msg["To"] = to_email
-            msg["Subject"] = subject
-            
-            html = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <style>
-                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                    .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                    .header {{ background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 20px; text-align: center; }}
-                    .content {{ padding: 20px; background: #f9f9f9; }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>LearnHub Daily Lesson</h1>
-                    </div>
-                    <div class="content">
-                        {body.replace('\n', '<br>')}
-                    </div>
-                </div>
-            </body>
-            </html>
-            """
-            
-            msg.attach(MIMEText(html, "html"))
-            
-            if port == 465:
-                # Use SSL for port 465
-                with smtplib.SMTP_SSL(SMTP_SERVER, port) as server:
-                    server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-                    server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
-            else:
-                # Use TLS for ports 587 and 25
-                with smtplib.SMTP(SMTP_SERVER, port) as server:
-                    server.ehlo()
-                    if port == 587:  # Only use STARTTLS on port 587
-                        server.starttls()
-                        server.ehlo()
-                    server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-                    server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
-            
-            print(f"📤 Successfully sent via SMTP port {port}: {subject} to {to_email}")
-            return True
-            
-        except Exception as e:
-            print(f"❌ SMTP port {port} failed: {str(e)}")
-            continue
-    
-    print("❌ All email methods failed")
+    print("❌ All email APIs failed")
     return False
-    
 
-def scheduled_job(email, course, part, days):  # Add days parameter
+def test_email_apis():
+    """Test API connections"""
+    print("🧪 Testing email APIs...")
+    
+    # Test with a simple email
+    test_result = send_email(
+        "test@example.com", 
+        "LearnHub API Test", 
+        "This is a test email from LearnHub APIs."
+    )
+    
+    if test_result:
+        print("✅ Email APIs are working!")
+    else:
+        print("❌ Email APIs failed")
+    
+    return test_result
+
+# Test on startup
+test_email_apis()
+
+def scheduled_job(email, course, part, days):
     try:
-        content = generate_daily_content(course, part, days)  # Pass days to generate_daily_content
+        content = generate_daily_content(course, part, days)
         if send_email(email, f"{course} - Day {part}", content):
             increment_progress(email, course)
     except Exception as e:
@@ -969,29 +940,9 @@ def remove_existing_jobs(email, course):
             except:
                 pass
 
-               
-def test_email_connection():
-    """Test SMTP connection and authentication"""
-    try:
-        print("🧪 Testing email connection...")
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.ehlo()
-        server.starttls()
-        server.ehlo()
-        server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-        print("✅ SMTP connection successful!")
-        server.quit()
-        return True
-    except Exception as e:
-        print(f"❌ SMTP connection failed: {e}")
-        return False
-
-# Test on startup
-test_email_connection()
 def schedule_course(email, course, days, time_str):
     try:
         now = datetime.now()
-        # Convert AM/PM time to 24-hour format for scheduling
         time_obj = datetime.strptime(time_str, "%I:%M %p")
         hour = time_obj.hour
         minute = time_obj.minute
@@ -1016,7 +967,7 @@ def schedule_course(email, course, days, time_str):
                 scheduled_job,
                 'date',
                 run_date=scheduled_time,
-                args=[email, course, i, days],  # Add days to args
+                args=[email, course, i, days],
                 id=job_id,
                 replace_existing=True
             )
@@ -1170,11 +1121,3 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
-
-
-
-
-
-
-
-
