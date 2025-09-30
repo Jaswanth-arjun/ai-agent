@@ -1001,11 +1001,10 @@ def certificate():
     try:
         # Connect to the same MySQL DB used by your PHP code
         conn = mysql.connector.connect(
-             host="sql104.infinityfree.com",
-            user="	if0_40043007",
-            password="FQM4N2z8L7ai9",
-            database="if0_40043007_db"
-  # Your database name
+            host="localhost",
+            user="root",         # Use your MySQL username (default for XAMPP is 'root')
+            password="",         # Use your MySQL password (blank if using default XAMPP)
+            database="userform"  # Your database name
         )
 
         cur = conn.cursor()
