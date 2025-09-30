@@ -2,6 +2,7 @@ import os
 import re
 import sqlite3
 import requests
+import pywhatkit
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, send_file, render_template
 from apscheduler.schedulers.background import BackgroundScheduler
 from together import Together
@@ -13,10 +14,7 @@ from datetime import datetime, timedelta
 import mysql.connector
 
 # === CONFIGURATION ===
-BREVO_API_KEY = "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"
-RESEND_API_KEY = "re_YqsuT6iy_FdipkYQypG2iHeL28utdFCfT"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
-EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
 
 # === Setup Together client ===
 together = Together(api_key=TOGETHER_API_KEY)
@@ -27,8 +25,8 @@ app.secret_key = os.urandom(24)
 csrf = CSRFProtect(app)
 scheduler = BackgroundScheduler()
 
-# === GLOBAL PROGRESS STORE (for demo/testing; use a DB for production) ===
-progress_store = {}  # key: (email, course), value: int (completed days)
+# === GLOBAL PROGRESS STORE ===
+progress_store = {}
 
 def increment_progress(email, course):
     key = (email, course)
@@ -41,7 +39,199 @@ def get_progress(email, course):
 def reset_progress(email, course):
     progress_store[(email, course)] = 0
 
-# === Combined HTML Template ===
+# === WHATSAPP FUNCTIONS ===
+def send_whatsapp_message(phone_number, message):
+    """Send WhatsApp message using pywhatkit"""
+    try:
+        print(f"📱 Sending WhatsApp to {phone_number}...")
+        
+        # Clean phone number (remove spaces, dashes, etc.)
+        clean_phone = ''.join(filter(str.isdigit, phone_number))
+        
+        # Add country code if missing (assuming India +91)
+        if len(clean_phone) == 10:
+            clean_phone = '91' + clean_phone
+        
+        # Format for pywhatkit
+        formatted_phone = f"+{clean_phone}"
+        
+        # Send message immediately
+        pywhatkit.sendwhatmsg_instantly(
+            phone_no=formatted_phone,
+            message=message,
+            wait_time=15,
+            tab_close=True,
+            close_time=3
+        )
+        
+        print(f"✅ WhatsApp sent to {phone_number}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ WhatsApp error: {str(e)}")
+        return False
+
+def format_lesson_for_whatsapp(course, day, total_days, content):
+    """Format lesson content for WhatsApp"""
+    # Extract title (first line of content)
+    lines = content.split('\n')
+    title = lines[0] if lines else f"Day {day}"
+    
+    # Clean up content for WhatsApp (remove markdown, limit length)
+    clean_content = content.replace('#', '').replace('**', '').replace('`', '')
+    
+    # Limit content length for WhatsApp
+    if len(clean_content) > 1500:
+        clean_content = clean_content[:1500] + "...\n\n[Content truncated - visit dashboard for full lesson]"
+    
+    message = f"""🎓 *{course} - Day {day}/{total_days}*
+
+*{title}*
+
+{clean_content}
+
+---
+📚 Sent by LearnHub
+💡 Reply STOP to unsubscribe"""
+
+    return message
+
+# === LESSON GENERATION ===
+def generate_daily_content(course, part, days):
+    if days == 1:
+        prompt = f"""
+You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
+
+Include all of the following in your response:
+
+1. 📘 **Course Title**
+2. 🧠 **Complete Explanation with Real-World Examples**
+   - Cover all major concepts a beginner should know.
+   - Include relevant examples and clear breakdowns.
+3. ✍️ **Practical Exercises**
+   - Add 3–5 hands-on tasks or projects.
+4. 📌 **Key Takeaways**
+   - Summarize essential points to remember.
+5. 🔗 **Curated Resource Links**
+   - Provide 3–5 helpful links to tutorials, videos, or documentation.
+6. 📝 **Format Everything in Markdown**
+   - Use proper headers (`#`), bullet points, and code blocks (```).
+
+Make sure the course is complete and self-contained.
+"""
+    else:
+        prompt = f"""
+You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in {days} days. Divide the topic into {days} structured lessons. Now generate **Lesson {part} of {days}**.
+
+Strictly generate only **Lesson {part}**, not others.
+
+Include in Lesson {part}:
+
+1. 📘 **Lesson Title**
+2. 🧠 **Focused Explanation with Real Examples**
+   - Teach one part of the topic clearly.
+3. ✍️ **2–3 Practical Exercises**
+4. 📌 **3–5 Key Takeaways**
+5. 🔗 **2–3 Curated Resource Links**
+6. 📝 **Markdown Formatting**
+   - Use headers, bullets, and code blocks as needed.
+
+🛑 Do NOT include other parts or summaries. Focus only on Lesson {part}.
+"""
+
+    response = together.chat.completions.create(
+        model="meta-llama/Llama-3-70b-chat-hf",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=1500
+    )
+    return response.choices[0].message.content.strip()
+
+# === SCHEDULING FUNCTIONS ===
+def scheduled_whatsapp_job(email, course, part, days, phone_number):
+    """Send daily lesson via WhatsApp"""
+    try:
+        print(f"🕐 Sending Day {part} WhatsApp for {course} to {phone_number}")
+        
+        # Generate lesson content
+        content = generate_daily_content(course, part, days)
+        
+        # Format for WhatsApp
+        whatsapp_message = format_lesson_for_whatsapp(course, part, days, content)
+        
+        # Send via WhatsApp
+        if send_whatsapp_message(phone_number, whatsapp_message):
+            increment_progress(email, course)
+            print(f"✅ Successfully sent Day {part} via WhatsApp")
+        else:
+            print(f"❌ Failed to send Day {part} via WhatsApp")
+            
+    except Exception as e:
+        print(f"❌ Failed to send day {part}: {str(e)}")
+
+def remove_existing_jobs(email, course):
+    for job in scheduler.get_jobs():
+        if job.id.startswith(f"{email}_{course}_"):
+            try:
+                scheduler.remove_job(job.id)
+            except:
+                pass
+
+def schedule_course(email, course, days, time_str, phone_number):
+    try:
+        now = datetime.now()
+        time_obj = datetime.strptime(time_str, "%I:%M %p")
+        hour = time_obj.hour
+        minute = time_obj.minute
+        
+        remove_existing_jobs(email, course)
+        
+        # Send welcome message via WhatsApp
+        if phone_number:
+            welcome_msg = f"""🎓 *Welcome to {course}!*
+
+You've successfully enrolled in our {days}-day course! 
+
+*Course Details:*
+• 📅 Duration: {days} days
+• ⏰ Daily time: {time_str}
+• 📱 Delivery: WhatsApp
+
+You'll receive your first lesson at {time_str}. Get ready to learn! 🚀
+
+---
+📚 LearnHub - Your Learning Journey"""
+            
+            send_whatsapp_message(phone_number, welcome_msg)
+        
+        # Schedule daily lessons
+        for i in range(1, days + 1):
+            scheduled_time = now + timedelta(days=i-1)
+            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
+            
+            job_id = f"{email}_{course}_day{i}"
+            scheduler.add_job(
+                scheduled_whatsapp_job,
+                'date',
+                run_date=scheduled_time,
+                args=[email, course, i, days, phone_number],
+                id=job_id,
+                replace_existing=True
+            )
+            print(f"📅 Scheduled Day {i} WhatsApp for {scheduled_time}")
+            
+        reset_progress(email, course)
+        session['email'] = email
+        session['course'] = course
+        session['total_days'] = int(days)
+        session['phone_number'] = phone_number
+        
+        return True
+    except Exception as e:
+        print(f"Failed to schedule course: {str(e)}")
+        return False
+
+# === HTML TEMPLATE (SAME AS BEFORE) ===
 FULL_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -155,7 +345,7 @@ FULL_TEMPLATE = '''
                 <span class="gradient-text bg-gradient-to-r from-primary-600 to-secondary-600">LearnHub</span>
             </h1>
             <p class="text-lg md:text-xl text-gray-600 max-w-2xl mx-auto">
-                Your personalized learning journey, tailored to your schedule and goals
+                Your personalized learning journey via WhatsApp
             </p>
         </header>
         
@@ -396,8 +586,8 @@ FULL_TEMPLATE = '''
                                 <span class="text-primary-600 text-2xl font-bold">2</span>
                                 <div class="absolute -bottom-5 left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-8 border-r-8 border-t-8 border-l-transparent border-r-transparent border-t-primary-100"></div>
                             </div>
-                            <h3 class="text-lg font-semibold text-gray-800 mb-3">Personalize Your Plan</h3>
-                            <p class="text-gray-600">Set your preferred schedule and learning pace that fits your lifestyle</p>
+                            <h3 class="text-lg font-semibold text-gray-800 mb-3">Enter WhatsApp Number</h3>
+                            <p class="text-gray-600">Provide your WhatsApp number to receive daily lessons</p>
                         </div>
                         
                         <div class="text-center">
@@ -405,8 +595,8 @@ FULL_TEMPLATE = '''
                                 <span class="text-primary-600 text-2xl font-bold">3</span>
                                 <div class="absolute -bottom-5 left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-8 border-r-8 border-t-8 border-l-transparent border-r-transparent border-t-primary-100"></div>
                             </div>
-                            <h3 class="text-lg font-semibold text-gray-800 mb-3">Start Learning</h3>
-                            <p class="text-gray-600">Receive daily bite-sized lessons and track your progress</p>
+                            <h3 class="text-lg font-semibold text-gray-800 mb-3">Receive Daily Lessons</h3>
+                            <p class="text-gray-600">Get bite-sized lessons via WhatsApp at your preferred time</p>
                         </div>
                     </div>
                 </div>
@@ -458,6 +648,17 @@ FULL_TEMPLATE = '''
                                 </div>
                                 <input type="email" name="email" id="email" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="you@example.com" required>
                             </div>
+                        </div>
+
+                        <div>
+                            <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">WhatsApp Number</label>
+                            <div class="relative">
+                                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                    <span class="text-gray-400">📱</span>
+                                </div>
+                                <input type="tel" name="phone" id="phone" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="911234567890" required>
+                            </div>
+                            <p class="mt-1 text-sm text-gray-500">We'll send daily lessons to this WhatsApp number</p>
                         </div>
                         
                         <div>
@@ -512,11 +713,12 @@ FULL_TEMPLATE = '''
         <script>
             function validateForm() {
                 const email = document.getElementById('email').value;
+                const phone = document.getElementById('phone').value;
                 const days = document.getElementById('days').value;
                 const time = document.getElementById('time').value;
                 
                 // Basic validation
-                if (!email || !days || !time) {
+                if (!email || !phone || !days || !time) {
                     alert('Please fill in all required fields');
                     return false;
                 }
@@ -525,6 +727,13 @@ FULL_TEMPLATE = '''
                 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                 if (!emailRegex.test(email)) {
                     alert('Please enter a valid email address');
+                    return false;
+                }
+
+                // Phone validation (basic)
+                const phoneRegex = /^\d{10,12}$/;
+                if (!phoneRegex.test(phone.replace(/\D/g, ''))) {
+                    alert('Please enter a valid phone number (10-12 digits)');
                     return false;
                 }
                 
@@ -554,7 +763,18 @@ FULL_TEMPLATE = '''
                         Your <span class="font-semibold text-primary-600">{{ course }}</span> course will begin as scheduled.
                     </p>
                     
-                    <!-- Progress Tracker - Moved to top -->
+                    <div class="bg-green-50 border border-green-200 rounded-xl p-6 mb-6">
+                        <div class="flex items-center justify-center mb-4">
+                            <span class="text-3xl mr-3">📱</span>
+                            <h3 class="text-lg font-semibold text-green-800">WhatsApp Lessons Activated</h3>
+                        </div>
+                        <p class="text-green-700">
+                            You'll receive daily lessons via WhatsApp at your chosen time. 
+                            Make sure WhatsApp is installed and working on your phone.
+                        </p>
+                    </div>
+                    
+                    <!-- Progress Tracker -->
                     <div class="bg-white border border-gray-200 rounded-xl p-6 mb-10">
                         <h3 class="font-semibold text-lg text-gray-900 mb-6 flex items-center justify-center">
                             <svg class="w-5 h-5 mr-2 text-primary-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -609,36 +829,6 @@ FULL_TEMPLATE = '''
                             </div>
                             {% endfor %}
                         </div>
-                    </div>
-                    
-                    <!-- What's Next Section - Moved below progress tracker -->
-                    <div class="bg-primary-50 rounded-xl p-6 mb-10 text-left">
-                        <h3 class="font-semibold text-primary-800 text-lg mb-4 flex items-center">
-                            <svg class="w-5 h-5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
-                            </svg>
-                            What's Next?
-                        </h3>
-                        <ul class="space-y-3">
-                            <li class="flex items-start">
-                                <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-                                </svg>
-                                <span class="text-gray-700">Check your inbox for the first lesson - it should arrive within 24 hours</span>
-                            </li>
-                            <li class="flex items-start">
-                                <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-                                </svg>
-                                <span class="text-gray-700">Add <span class="font-mono text-primary-600">learning@learnhub.com</span> to your contacts to ensure delivery</span>
-                            </li>
-                            <li class="flex items-start">
-                                <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-                                </svg>
-                                <span class="text-gray-700">Join our <a href="#" class="text-primary-600 hover:underline">community forum</a> for peer support and additional resources</span>
-                            </li>
-                        </ul>
                     </div>
                     
                     <!-- Action Buttons -->
@@ -708,280 +898,13 @@ FULL_TEMPLATE = '''
                     card.querySelector('.course-icon').classList.remove('animate-float');
                 });
             });
-            
-            // Animate progress rings
-            const progressRings = document.querySelectorAll('.progress-ring');
-            progressRings.forEach(ring => {
-                const circle = ring.querySelector('.progress-ring__circle');
-                const radius = circle.r.baseVal.value;
-                const circumference = 2 * Math.PI * radius;
-                const progress = ring.dataset.progress;
-                
-                circle.style.strokeDasharray = circumference;
-                circle.style.strokeDashoffset = circumference - (progress / 100) * circumference;
-            });
         });
     </script>
 </body>
 </html>
 '''
 
-def generate_daily_content(course, part, days):
-    if days == 1:
-        prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
-
-Include all of the following in your response:
-
-1. 📘 **Course Title**
-2. 🧠 **Complete Explanation with Real-World Examples**
-   - Cover all major concepts a beginner should know.
-   - Include relevant examples and clear breakdowns.
-3. ✍️ **Practical Exercises**
-   - Add 3–5 hands-on tasks or projects.
-4. 📌 **Key Takeaways**
-   - Summarize essential points to remember.
-5. 🔗 **Curated Resource Links**
-   - Provide 3–5 helpful links to tutorials, videos, or documentation.
-6. 📝 **Format Everything in Markdown**
-   - Use proper headers (`#`), bullet points, and code blocks (```).
-
-Make sure the course is complete and self-contained.
-"""
-    else:
-        prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in {days} days. Divide the topic into {days} structured lessons. Now generate **Lesson {part} of {days}**.
-
-Strictly generate only **Lesson {part}**, not others.
-
-Include in Lesson {part}:
-
-1. 📘 **Lesson Title**
-2. 🧠 **Focused Explanation with Real Examples**
-   - Teach one part of the topic clearly.
-3. ✍️ **2–3 Practical Exercises**
-4. 📌 **3–5 Key Takeaways**
-5. 🔗 **2–3 Curated Resource Links**
-6. 📝 **Markdown Formatting**
-   - Use headers, bullets, and code blocks as needed.
-
-🛑 Do NOT include other parts or summaries. Focus only on Lesson {part}.
-"""
-
-    response = together.chat.completions.create(
-        model="meta-llama/Llama-3-70b-chat-hf",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=1500
-    )
-    return response.choices[0].message.content.strip()
-
-def send_email_brevo(to_email, subject, body):
-    """Use Brevo API for email"""
-    try:
-        print(f"📧 Trying Brevo API for {to_email}...")
-        
-        html_content = f"""
-        <html>
-            <body>
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 10px; overflow: hidden;">
-                    <div style="background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 25px; text-align: center;">
-                        <h1 style="margin: 0; font-size: 24px;">LearnHub</h1>
-                        <p style="margin: 5px 0 0 0; opacity: 0.9;">Your Learning Journey</p>
-                    </div>
-                    <div style="padding: 25px; background: #ffffff;">
-                        <h2 style="color: #333; margin-top: 0;">{subject}</h2>
-                        <div style="line-height: 1.6; color: #555;">
-                            {body.replace('\n', '<br>')}
-                        </div>
-                    </div>
-                    <div style="background: #f8f9fa; padding: 15px; text-align: center; color: #666; font-size: 12px;">
-                        <p>Sent by LearnHub • <a href="#" style="color: #4361ee;">Unsubscribe</a></p>
-                    </div>
-                </div>
-            </body>
-        </html>
-        """
-        
-        url = "https://api.brevo.com/v3/smtp/email"
-        headers = {
-            "accept": "application/json",
-            "api-key": BREVO_API_KEY,
-            "content-type": "application/json"
-        }
-        
-        data = {
-            "sender": {
-                "name": "LearnHub",
-                "email": "nellurujaswanth2004@gmail.com"
-            },
-            "to": [{"email": to_email}],
-            "subject": subject,
-            "htmlContent": html_content
-        }
-        
-        response = requests.post(url, headers=headers, json=data)
-        
-        if response.status_code in [200, 201]:
-            print(f"✅ Brevo: Email sent to {to_email}")
-            return True
-        else:
-            print(f"❌ Brevo API error: {response.status_code} - {response.text}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Brevo error: {str(e)}")
-        return False
-
-def send_email_resend(to_email, subject, body):
-    """Use Resend.com API for email"""
-    try:
-        print(f"📧 Trying Resend API for {to_email}...")
-        
-        html_content = f"""
-        <html>
-            <body>
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 10px; overflow: hidden;">
-                    <div style="background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 25px; text-align: center;">
-                        <h1 style="margin: 0; font-size: 24px;">LearnHub</h1>
-                        <p style="margin: 5px 0 0 0; opacity: 0.9;">Daily Learning</p>
-                    </div>
-                    <div style="padding: 25px; background: #ffffff;">
-                        <h2 style="color: #333; margin-top: 0;">{subject}</h2>
-                        <div style="line-height: 1.6; color: #555;">
-                            {body.replace('\n', '<br>')}
-                        </div>
-                    </div>
-                    <div style="background: #f8f9fa; padding: 15px; text-align: center; color: #666; font-size: 12px;">
-                        <p>You're receiving this because you signed up for a course</p>
-                    </div>
-                </div>
-            </body>
-        </html>
-        """
-        
-        url = "https://api.resend.com/emails"
-        headers = {
-            "Authorization": f"Bearer {RESEND_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        data = {
-            "from": "LearnHub <onboarding@resend.dev>",
-            "to": [to_email],
-            "subject": subject,
-            "html": html_content
-        }
-        
-        response = requests.post(url, headers=headers, json=data)
-        
-        if response.status_code == 200:
-            print(f"✅ Resend: Email sent to {to_email}")
-            return True
-        else:
-            print(f"❌ Resend API error: {response.status_code} - {response.text}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Resend error: {str(e)}")
-        return False
-
-def send_email(to_email, subject, body):
-    """Universal email function using only APIs"""
-    if not to_email or "@" not in to_email:
-        print(f"❌ Invalid email address: {to_email}")
-        return False
-    
-    # Method 1: Try Brevo API first
-    if send_email_brevo(to_email, subject, body):
-        return True
-    
-    # Method 2: Try Resend API second
-    if send_email_resend(to_email, subject, body):
-        return True
-    
-    print("❌ All email APIs failed")
-    return False
-
-def test_email_apis():
-    """Test API connections"""
-    print("🧪 Testing email APIs...")
-    
-    # Test with a simple email
-    test_result = send_email(
-        "test@example.com", 
-        "LearnHub API Test", 
-        "This is a test email from LearnHub APIs."
-    )
-    
-    if test_result:
-        print("✅ Email APIs are working!")
-    else:
-        print("❌ Email APIs failed")
-    
-    return test_result
-
-# Test on startup
-test_email_apis()
-
-def scheduled_job(email, course, part, days):
-    try:
-        content = generate_daily_content(course, part, days)
-        if send_email(email, f"{course} - Day {part}", content):
-            increment_progress(email, course)
-    except Exception as e:
-        print(f"Failed to send day {part} email: {str(e)}")
-
-def remove_existing_jobs(email, course):
-    for job in scheduler.get_jobs():
-        if job.id.startswith(f"{email}_{course}_"):
-            try:
-                scheduler.remove_job(job.id)
-            except:
-                pass
-
-def schedule_course(email, course, days, time_str):
-    try:
-        now = datetime.now()
-        time_obj = datetime.strptime(time_str, "%I:%M %p")
-        hour = time_obj.hour
-        minute = time_obj.minute
-        
-        remove_existing_jobs(email, course)
-        
-        welcome_content = (
-            f"Welcome to <b>{course}</b>!<br><br>"
-            "You will receive daily lessons in your inbox. Let's start learning!"
-        )
-        
-        welcome_sent = send_email(email, f"Welcome to {course}!", welcome_content)
-        if not welcome_sent:
-            print("⚠️ Welcome email failed, but continuing with scheduling...")
-            
-        for i in range(1, days + 1):
-            scheduled_time = now + timedelta(days=i-1)
-            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
-            
-            job_id = f"{email}_{course}_day{i}"
-            scheduler.add_job(
-                scheduled_job,
-                'date',
-                run_date=scheduled_time,
-                args=[email, course, i, days],
-                id=job_id,
-                replace_existing=True
-            )
-            print(f"📅 Scheduled Day {i} email at {scheduled_time}")
-            
-        reset_progress(email, course)
-        session['email'] = email
-        session['course'] = course
-        session['total_days'] = int(days)
-        return True
-    except Exception as e:
-        print(f"Failed to schedule course: {str(e)}")
-        return False
-
+# === FLASK ROUTES ===
 @app.route('/', methods=['GET', 'POST'])
 def select_course():
     if request.method == "POST":
@@ -1000,21 +923,28 @@ def schedule_form():
     if request.method == "POST":
         try:
             email = request.form.get("email", "").strip()
+            phone = request.form.get("phone", "").strip()
             days = request.form.get("days", "").strip()
             time = request.form.get("time", "").strip()
-            if not all([email, days, time]):
+            
+            if not all([email, phone, days, time]):
                 raise ValueError("All fields are required")
+            
             if not "@" in email or not "." in email:
                 raise ValueError("Please enter a valid email address")
+            
             if not days.isdigit() or int(days) <= 0:
                 raise ValueError("Please enter a valid number of days")
-            if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-                raise ValueError("Please enter a valid email address")
-            schedule_course(email, course, int(days), time)
+            
+            # Schedule with WhatsApp
+            schedule_course(email, course, int(days), time, phone)
             session['email'] = email
             session['course'] = course
             session['total_days'] = int(days)
+            session['phone_number'] = phone
+            
             return redirect(url_for('progress'))
+            
         except ValueError as e:
             error_message = str(e)
             return render_template_string(
@@ -1057,6 +987,7 @@ def progress():
         csrf_token=generate_csrf()
     )
 
+# ... [Keep your other routes the same - signup, certificate, etc.]
 @app.route("/course-agent", methods=["GET", "POST"])
 def course_agent():
     return render_template_string(
@@ -1119,5 +1050,6 @@ def certificate():
     return render_template("cert.html", name=name, course=course, date=date)
 
 if __name__ == "__main__":
+    # Install required package: pip install pywhatkit
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
