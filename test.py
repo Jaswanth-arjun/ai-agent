@@ -16,9 +16,9 @@ import mysql.connector
 
 # === CONFIGURATION ===
 SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
+SMTP_PORT = 25
 EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
-EMAIL_PASSWORD = "brhi ghdy shzk nif"
+EMAIL_PASSWORD = "brhighdyshzknif"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
 
 # === Setup Together client ===
@@ -780,72 +780,71 @@ Include in Lesson {part}:
     return response.choices[0].message.content.strip()
 
 def send_email(to_email, subject, body):
-    try:
-        if not to_email or "@" not in to_email:
-            print(f"❌ Invalid email address: {to_email}")
-            return False
-        
-        msg = MIMEMultipart()
-        msg["From"] = f"LearnHub <{EMAIL_ADDRESS}>"
-        msg["To"] = to_email
-        msg["Subject"] = subject
-        
-        # Create HTML email
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 20px; text-align: center; }}
-                .content {{ padding: 20px; background: #f9f9f9; }}
-                .footer {{ margin-top: 20px; text-align: center; font-size: 12px; color: #777; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>LearnHub Daily Lesson</h1>
-                    <p>Your personalized learning journey</p>
-                </div>
-                <div class="content">
-                    {body.replace('\n', '<br>')}
-                    <div class="footer">
-                        <p>You received this email because you signed up for a course on LearnHub.</p>
+    ports_to_try = [587, 465, 25]  # Try ports in this order
+    
+    for port in ports_to_try:
+        try:
+            print(f"🔧 Trying port {port}...")
+            
+            if not to_email or "@" not in to_email:
+                print(f"❌ Invalid email address: {to_email}")
+                return False
+            
+            msg = MIMEMultipart()
+            msg["From"] = f"LearnHub <{EMAIL_ADDRESS}>"
+            msg["To"] = to_email
+            msg["Subject"] = subject
+            
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                    .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                    .header {{ background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 20px; text-align: center; }}
+                    .content {{ padding: 20px; background: #f9f9f9; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>LearnHub Daily Lesson</h1>
+                    </div>
+                    <div class="content">
+                        {body.replace('\n', '<br>')}
                     </div>
                 </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        msg.attach(MIMEText(html, "html"))
-        
-        # ✅ FIXED: Use TLS instead of SSL for port 587
-        print(f"🔧 Connecting to {SMTP_SERVER}:{SMTP_PORT}...")
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.ehlo()  # Identify yourself to the server
-            server.starttls()  # Upgrade to TLS encryption
-            server.ehlo()  # Re-identify after TLS
-            print("🔧 Logging in...")
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            print("🔧 Sending email...")
-            server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
-        
-        print(f"📤 Successfully sent: {subject} to {to_email}")
-        return True
-        
-    except smtplib.SMTPAuthenticationError as e:
-        print(f"❌ SMTP Authentication failed: {str(e)}")
-        print("💡 Please check your email credentials and ensure you're using an App Password")
-        return False
-    except smtplib.SMTPException as e:
-        print(f"❌ SMTP error: {str(e)}")
-        return False
-    except Exception as e:
-        print(f"❌ Error sending email: {str(e)}")
-        return False
+            </body>
+            </html>
+            """
+            
+            msg.attach(MIMEText(html, "html"))
+            
+            if port == 465:
+                # Use SSL for port 465
+                with smtplib.SMTP_SSL(SMTP_SERVER, port) as server:
+                    server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+                    server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
+            else:
+                # Use TLS for ports 587 and 25
+                with smtplib.SMTP(SMTP_SERVER, port) as server:
+                    server.ehlo()
+                    if port == 587:  # Only use STARTTLS on port 587
+                        server.starttls()
+                        server.ehlo()
+                    server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+                    server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
+            
+            print(f"📤 Successfully sent via port {port}: {subject} to {to_email}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Port {port} failed: {str(e)}")
+            continue  # Try next port
+    
+    print("❌ All ports failed")
+    return False
 def scheduled_job(email, course, part, days):  # Add days parameter
     try:
         content = generate_daily_content(course, part, days)  # Pass days to generate_daily_content
@@ -1061,6 +1060,7 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
 
 
 
