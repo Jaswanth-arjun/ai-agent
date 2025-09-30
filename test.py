@@ -18,7 +18,7 @@ import mysql.connector
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 EMAIL_ADDRESS = "nellurujaswanth2004@gmail.com"
-EMAIL_PASSWORD = "xwmcygkwtdalhavi"
+EMAIL_PASSWORD = "brhighdyshzknif"
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
 
 # === Setup Together client ===
@@ -784,20 +784,22 @@ def send_email(to_email, subject, body):
         if not to_email or "@" not in to_email:
             print(f"❌ Invalid email address: {to_email}")
             return False
+        
         msg = MIMEMultipart()
         msg["From"] = f"LearnHub <{EMAIL_ADDRESS}>"
         msg["To"] = to_email
         msg["Subject"] = subject
+        
+        # Create HTML email
         html = f"""
         <!DOCTYPE html>
         <html>
         <head>
             <style>
-                body {{ font-family: 'Poppins', sans-serif; line-height: 1.6; color: #333; }}
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
-                .content {{ padding: 20px; background: #f9f9f9; border-radius: 0 0 8px 8px; }}
-                .button {{ display: inline-block; padding: 10px 20px; background: #4361ee; color: white; text-decoration: none; border-radius: 5px; margin-top: 15px; }}
+                .header {{ background: linear-gradient(135deg, #4361ee, #3a0ca3); color: white; padding: 20px; text-align: center; }}
+                .content {{ padding: 20px; background: #f9f9f9; }}
                 .footer {{ margin-top: 20px; text-align: center; font-size: 12px; color: #777; }}
             </style>
         </head>
@@ -811,23 +813,39 @@ def send_email(to_email, subject, body):
                     {body.replace('\n', '<br>')}
                     <div class="footer">
                         <p>You received this email because you signed up for a course on LearnHub.</p>
-                        <p><a href="#" style="color: #4361ee;">Unsubscribe</a> | <a href="#" style="color: #4361ee;">Preferences</a></p>
                     </div>
                 </div>
             </div>
         </body>
         </html>
         """
+        
         msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+        
+        # ✅ FIXED: Use TLS instead of SSL for port 587
+        print(f"🔧 Connecting to {SMTP_SERVER}:{SMTP_PORT}...")
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.ehlo()  # Identify yourself to the server
+            server.starttls()  # Upgrade to TLS encryption
+            server.ehlo()  # Re-identify after TLS
+            print("🔧 Logging in...")
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            print("🔧 Sending email...")
             server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
+        
         print(f"📤 Successfully sent: {subject} to {to_email}")
         return True
+        
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"❌ SMTP Authentication failed: {str(e)}")
+        print("💡 Please check your email credentials and ensure you're using an App Password")
+        return False
+    except smtplib.SMTPException as e:
+        print(f"❌ SMTP error: {str(e)}")
+        return False
     except Exception as e:
         print(f"❌ Error sending email: {str(e)}")
         return False
-
 def scheduled_job(email, course, part, days):  # Add days parameter
     try:
         content = generate_daily_content(course, part, days)  # Pass days to generate_daily_content
@@ -843,7 +861,24 @@ def remove_existing_jobs(email, course):
                 scheduler.remove_job(job.id)
             except:
                 pass
+def test_email_connection():
+    """Test SMTP connection and authentication"""
+    try:
+        print("🧪 Testing email connection...")
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        print("✅ SMTP connection successful!")
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"❌ SMTP connection failed: {e}")
+        return False
 
+# Test on startup
+test_email_connection()
 def schedule_course(email, course, days, time_str):
     try:
         now = datetime.now()
@@ -859,8 +894,9 @@ def schedule_course(email, course, days, time_str):
             "You will receive daily lessons in your inbox. Let's start learning!"
         )
         
-        if not send_email(email, f"Welcome to {course}!", welcome_content):
-            raise Exception("Failed to send welcome email")
+        welcome_sent = send_email(email, f"Welcome to {course}!", welcome_content)
+        if not welcome_sent:
+            print("⚠️ Welcome email failed, but continuing with scheduling...")
             
         for i in range(1, days + 1):
             scheduled_time = now + timedelta(days=i-1)
@@ -1025,5 +1061,6 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
 
 
