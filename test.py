@@ -40,36 +40,36 @@ def reset_progress(email, course):
 
 # === WHATSAPP FUNCTIONS (UPDATED - NO pywhatkit) ===
 def send_whatsapp_message(phone_number, message):
-    """Send WhatsApp message using a web-based service - SERVER FRIENDLY"""
+    """Send WhatsApp via GreenAPI - 100 FREE messages daily"""
     try:
-        print(f"📱 Attempting to send WhatsApp to {phone_number}...")
+        print(f"📱 Sending WhatsApp via GreenAPI to {phone_number}...")
         
-        # Clean phone number (remove spaces, dashes, etc.)
+        # Clean phone number
         clean_phone = ''.join(filter(str.isdigit, phone_number))
         
-        # Add country code if missing (assuming India +91)
-        if len(clean_phone) == 10:
-            clean_phone = '91' + clean_phone
+        # === REPLACE WITH YOUR GREENAPI CREDENTIALS ===
+        id_instance = "7105332961"  # From GreenAPI dashboard
+        api_token = "25ed05404b7642c0af21c1cfa34b8d9f9aa413f0de3c4717a8"  # From GreenAPI dashboard
         
-        print(f"📞 Formatted phone: +{clean_phone}")
-        print(f"💬 Message length: {len(message)} characters")
+        url = f"https://api.green-api.com/waInstance{id_instance}/sendMessage/{api_token}"
         
-        # For now, we'll simulate WhatsApp sending since we can't use pywhatkit
-        # In production, you could use:
-        # - WhatsApp Business API
-        # - Twilio WhatsApp API
-        # - Another WhatsApp service provider
+        payload = {
+            "chatId": f"{clean_phone}@c.us",
+            "message": message
+        }
         
-        print(f"✅ [SIMULATED] WhatsApp message would be sent to +{clean_phone}")
-        print(f"📝 Message preview: {message[:100]}...")
+        response = requests.post(url, json=payload)
         
-        # Return True to simulate success
-        return True
-        
+        if response.status_code == 200:
+            print(f"✅ WhatsApp sent via GreenAPI to {clean_phone}")
+            return True
+        else:
+            print(f"❌ GreenAPI failed: {response.status_code}")
+            return False
+            
     except Exception as e:
-        print(f"❌ WhatsApp simulation failed: {str(e)}")
+        print(f"❌ GreenAPI error: {str(e)}")
         return False
-
 def send_whatsapp_fallback(phone_number, message):
     """Fallback method - currently same as primary since we're simulating"""
     try:
@@ -1091,3 +1091,4 @@ def schedule_form():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
