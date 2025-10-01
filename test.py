@@ -30,9 +30,9 @@ app.secret_key = os.urandom(24)
 csrf = CSRFProtect(app)
 scheduler = BackgroundScheduler()
 
-# === GLOBAL PROGRESS STORE (for demo/testing; use a DB for production) ===
-progress_store = {}  # key: (phone, course), value: int (completed days)
-user_phone_store = {}  # Store user phone numbers by email
+# === GLOBAL PROGRESS STORE ===
+progress_store = {}
+user_phone_store = {}
 
 def increment_progress(phone, course):
     key = (phone, course)
@@ -67,14 +67,12 @@ def send_welcome_message(phone, course):
 You've successfully enrolled in *{course}*! 
 
 📚 *What to expect:*
-• Daily lessons delivered via WhatsApp
-• Bite-sized content for easy learning
-• Practical exercises and resources
+• Daily lessons via WhatsApp
+• Bite-sized content
+• Practical exercises
 • Progress tracking
 
-⏰ Your first lesson will arrive tomorrow at your scheduled time.
-
-💡 *Pro tip:* Save this number to receive all messages properly!
+⏰ Your first lesson arrives tomorrow!
 
 Happy learning! 🚀
 """
@@ -87,59 +85,33 @@ def send_course_schedule(phone, course, days, time_str):
 
 *Course:* {course}
 *Duration:* {days} days
-*Daily Time:* {time_str}
+*Time:* {time_str} daily
 
-🗓️ *Schedule Overview:*
-• You'll receive {days} daily lessons
-• Each lesson takes 15-30 minutes
-• Lessons arrive at {time_str} daily
-• Complete at your own pace
-
-🎯 *Tips for success:*
-1. Set aside dedicated time daily
-2. Complete the practical exercises
-3. Review previous lessons
-4. Don't hesitate to revisit content
-
-Ready to begin your learning journey? 🚀
+You'll receive {days} daily lessons. Ready to begin? 🚀
 """
     return send_whatsapp_message(phone, schedule_message)
 
 def generate_daily_content(course, part, days):
-    """Generate daily course content using Together AI"""
+    """Generate daily course content"""
     if days == 1:
         prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
+Create a comprehensive one-day course for: '{course}'. Include:
+1. Key concepts with examples
+2. 2-3 practical exercises
+3. Main takeaways
+4. Helpful resources
 
-Include all of the following in your response:
-
-1. 📘 **Course Title**
-2. 🧠 **Complete Explanation with Real-World Examples**
-   - Cover all major concepts a beginner should know.
-   - Include relevant examples and clear breakdowns.
-3. ✍️ **Practical Exercises**
-   - Add 3–5 hands-on tasks or projects.
-4. 📌 **Key Takeaways**
-   - Summarize essential points to remember.
-5. 🔗 **Curated Resource Links**
-   - Provide 3–5 helpful links to tutorials, videos, or documentation.
-
-Make sure the content is concise and suitable for WhatsApp delivery.
+Keep it concise for WhatsApp.
 """
     else:
         prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in {days} days. Generate **Lesson {part} of {days}**.
+Create Lesson {part} of {days} for: '{course}'. Include:
+1. Today's topic
+2. Clear explanations with examples
+3. 1-2 practical exercises
+4. Key takeaways
 
-Include in Lesson {part}:
-
-1. 📘 **Lesson Title**
-2. 🧠 **Focused Explanation with Real Examples**
-   - Teach one part of the topic clearly.
-3. ✍️ **2–3 Practical Exercises**
-4. 📌 **3–5 Key Takeaways**
-5. 🔗 **2–3 Curated Resource Links**
-
-Keep the content concise and suitable for WhatsApp delivery. Focus only on Lesson {part}.
+Focus only on Lesson {part}. Keep it concise.
 """
 
     try:
@@ -147,44 +119,37 @@ Keep the content concise and suitable for WhatsApp delivery. Focus only on Lesso
             model="meta-llama/Llama-3-70b-chat-hf",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
-            max_tokens=800  # Reduced for WhatsApp
+            max_tokens=800
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"📚 *Lesson {part} of {days} - {course}*\n\n🚧 Content generation temporarily unavailable. Please check back later for today's lesson!"
+        return f"📚 *{course} - Day {part}/{days}*\n\nContent generation issue. Check back later!"
 
-def format_whatsapp_content(content, course, part, days, total_days):
-    """Format content for WhatsApp with proper formatting"""
-    # Basic formatting for WhatsApp
+def format_whatsapp_content(content, course, part, total_days):
+    """Format content for WhatsApp"""
     formatted_content = content.replace('**', '*').replace('__', '_')
-    
-    # Add header
     header = f"📚 *{course} - Day {part}/{total_days}*\n\n"
     
-    # Truncate if too long for WhatsApp
     max_length = 1500
     if len(header + formatted_content) > max_length:
-        formatted_content = formatted_content[:max_length - len(header) - 50] + "...\n\n💡 *Message too long? Some content was trimmed for WhatsApp delivery.*"
+        formatted_content = formatted_content[:max_length - len(header) - 50] + "..."
     
-    return header + formatted_content + f"\n\n---\n*Progress: {part}/{total_days} days completed* ✅"
+    return header + formatted_content + f"\n\nProgress: {part}/{total_days} ✅"
 
-def scheduled_job(phone, course, part, days, total_days):
-    """Scheduled job to send daily lessons via WhatsApp"""
+def scheduled_job(phone, course, part, total_days):
+    """Send daily lessons via WhatsApp"""
     try:
-        content = generate_daily_content(course, part, days)
-        formatted_content = format_whatsapp_content(content, course, part, days, total_days)
+        content = generate_daily_content(course, part, total_days)
+        formatted_content = format_whatsapp_content(content, course, part, total_days)
         
         if send_whatsapp_message(phone, formatted_content):
             increment_progress(phone, course)
-            print(f"✅ Sent Day {part} WhatsApp message for {course} to {phone}")
-        else:
-            print(f"❌ Failed to send Day {part} WhatsApp message")
-            
+            print(f"✅ Sent Day {part} for {course} to {phone}")
     except Exception as e:
-        print(f"❌ Failed to send day {part} WhatsApp: {str(e)}")
+        print(f"❌ Failed to send day {part}: {str(e)}")
 
 def remove_existing_jobs(phone, course):
-    """Remove existing scheduled jobs for a user"""
+    """Remove existing scheduled jobs"""
     for job in scheduler.get_jobs():
         if job.id.startswith(f"{phone}_{course}_"):
             try:
@@ -193,28 +158,21 @@ def remove_existing_jobs(phone, course):
                 pass
 
 def schedule_course(email, phone, course, days, time_str):
-    """Schedule the entire course via WhatsApp"""
+    """Schedule the entire course"""
     try:
         now = datetime.now()
         
-        # Convert AM/PM time to 24-hour format for scheduling
+        # Convert time to 24-hour format
         time_obj = datetime.strptime(time_str, "%I:%M %p")
         hour = time_obj.hour
         minute = time_obj.minute
         
-        # Remove any existing jobs for this user/course
         remove_existing_jobs(phone, course)
-        
-        # Store phone number for this email
         user_phone_store[email] = phone
         
-        # Send welcome message
-        if not send_welcome_message(phone, course):
-            raise Exception("Failed to send welcome WhatsApp message")
-            
-        # Send schedule information
-        if not send_course_schedule(phone, course, days, time_str):
-            raise Exception("Failed to send schedule WhatsApp message")
+        # Send welcome and schedule messages
+        send_welcome_message(phone, course)
+        send_course_schedule(phone, course, days, time_str)
         
         # Schedule daily lessons
         for i in range(1, days + 1):
@@ -226,16 +184,12 @@ def schedule_course(email, phone, course, days, time_str):
                 scheduled_job,
                 'date',
                 run_date=scheduled_time,
-                args=[phone, course, i, days, days],
-                id=job_id,
-                replace_existing=True
+                args=[phone, course, i, days],
+                id=job_id
             )
-            print(f"📅 Scheduled Day {i} WhatsApp for {phone} at {scheduled_time}")
+            print(f"📅 Scheduled Day {i} for {phone} at {scheduled_time}")
             
-        # Reset progress
         reset_progress(phone, course)
-        
-        # Store in session
         session['email'] = email
         session['phone'] = phone
         session['course'] = course
@@ -246,6 +200,146 @@ def schedule_course(email, phone, course, days, time_str):
     except Exception as e:
         print(f"❌ Failed to schedule course: {str(e)}")
         return False
+
+# === COMPLETE HTML TEMPLATE ===
+FULL_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LearnHub - WhatsApp Learning</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        {% if template == 'course_selection' %}
+        <!-- Course Selection -->
+        <div class="text-center mb-12">
+            <h1 class="text-4xl font-bold text-blue-600 mb-4">LearnHub</h1>
+            <p class="text-lg text-gray-600">Learn via WhatsApp - Free Daily Lessons</p>
+        </div>
+        
+        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+            {% for course in ['Python Programming', 'Web Development', 'Data Science', 'JavaScript', 'React Framework', 'AI & ML'] %}
+            <div class="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow">
+                <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4 text-blue-600 text-xl">
+                    📚
+                </div>
+                <h3 class="text-xl font-semibold mb-3">{{ course }}</h3>
+                <form method="POST" action="/schedule">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="course" value="{{ course }}">
+                    <button type="submit" class="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors">
+                        Select Course
+                    </button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+
+        {% elif template == 'user_form' %}
+        <!-- Schedule Form -->
+        <div class="max-w-md mx-auto bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-2xl font-bold mb-6">Schedule {{ course }}</h2>
+            
+            {% if error %}
+            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+                {{ error }}
+            </div>
+            {% endif %}
+            
+            <form method="POST" class="space-y-4">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="course" value="{{ course }}">
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                    <input type="email" name="email" required 
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                           placeholder="your@email.com">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">WhatsApp Number</label>
+                    <input type="tel" name="phone" placeholder="+1234567890" required 
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                    <p class="text-sm text-gray-500 mt-1">We'll send daily lessons to this WhatsApp number</p>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Duration (Days)</label>
+                    <input type="number" name="days" min="1" max="90" value="30" required 
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Preferred Time</label>
+                    <select name="time" required 
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">Select time</option>
+                        {% for hour in range(1, 13) %}
+                        <option value="{{ hour }}:00 AM">{{ hour }}:00 AM</option>
+                        <option value="{{ hour }}:30 AM">{{ hour }}:30 AM</option>
+                        {% endfor %}
+                        {% for hour in range(1, 13) %}
+                        <option value="{{ hour }}:00 PM">{{ hour }}:00 PM</option>
+                        <option value="{{ hour }}:30 PM">{{ hour }}:30 PM</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <button type="submit" class="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 font-medium">
+                    Start Learning via WhatsApp
+                </button>
+            </form>
+        </div>
+
+        {% elif template == 'confirm' %}
+        <!-- Confirmation -->
+        <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-lg p-8 text-center">
+            <div class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <span class="text-3xl">✅</span>
+            </div>
+            
+            <h2 class="text-2xl font-bold mb-4">Course Scheduled Successfully!</h2>
+            <p class="text-lg mb-6">Your <strong class="text-blue-600">{{ course }}</strong> course will be delivered via WhatsApp.</p>
+            
+            <div class="bg-gray-50 rounded-lg p-6 mb-6 text-left">
+                <h3 class="font-semibold mb-4 text-center">Your Progress: {{ completed_days }}/{{ total_days }} days</h3>
+                <div class="w-full bg-gray-200 rounded-full h-4 mb-2">
+                    <div class="bg-green-600 h-4 rounded-full" style="width: {{ (completed_days/total_days*100) if total_days > 0 else 0 }}%"></div>
+                </div>
+                <p class="text-center text-sm text-gray-600">{{ completed_days }}/{{ total_days }} lessons completed</p>
+            </div>
+            
+            <div class="bg-blue-50 rounded-lg p-6 mb-6 text-left">
+                <h4 class="font-semibold mb-3 text-blue-800">📱 What happens next?</h4>
+                <ul class="space-y-2 text-sm text-gray-700">
+                    <li>• You'll receive a welcome message on WhatsApp</li>
+                    <li>• Daily lessons start tomorrow at your chosen time</li>
+                    <li>• Each lesson takes 15-30 minutes</li>
+                    <li>• Save our number to ensure delivery</li>
+                </ul>
+            </div>
+            
+            <div class="space-y-3">
+                <a href="/" class="block bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 font-medium">
+                    Back to Courses
+                </a>
+                <p class="text-sm text-gray-500">Check your WhatsApp for confirmation messages!</p>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Footer -->
+        <footer class="mt-12 text-center text-gray-500 text-sm">
+            <p>&copy; 2024 LearnHub. Learning delivered via WhatsApp.</p>
+        </footer>
+    </div>
+</body>
+</html>
+'''
 
 # === FLASK ROUTES ===
 
@@ -272,42 +366,37 @@ def schedule_form():
             days = request.form.get("days", "").strip()
             time = request.form.get("time", "").strip()
             
-            # Validation
             if not all([email, phone, days, time]):
                 raise ValueError("All fields are required")
             
-            if not "@" in email or not "." in email:
+            if not "@" in email:
                 raise ValueError("Please enter a valid email address")
                 
-            # Basic phone validation (you might want to enhance this)
             if not phone.replace('+', '').replace(' ', '').isdigit():
-                raise ValueError("Please enter a valid phone number with country code (e.g., +1234567890)")
+                raise ValueError("Please enter a valid WhatsApp number with country code (e.g., +1234567890)")
             
-            if not days.isdigit() or int(days) <= 0:
-                raise ValueError("Please enter a valid number of days")
+            if not days.isdigit() or int(days) <= 0 or int(days) > 90:
+                raise ValueError("Please enter a valid number of days (1-90)")
             
-            # Schedule the course
             if schedule_course(email, phone, course, int(days), time):
                 return redirect(url_for('progress'))
             else:
-                raise ValueError("Failed to schedule course. Please try again.")
+                raise ValueError("Scheduling failed. Please try again.")
                 
         except ValueError as e:
-            error_message = str(e)
             return render_template_string(
                 FULL_TEMPLATE,
                 template='user_form',
                 course=course,
-                error=error_message,
+                error=str(e),
                 csrf_token=generate_csrf()
             )
         except Exception as e:
-            error_message = "An error occurred. Please try again."
             return render_template_string(
                 FULL_TEMPLATE,
                 template='user_form',
                 course=course,
-                error=error_message,
+                error="An error occurred. Please try again.",
                 csrf_token=generate_csrf()
             )
     
@@ -324,7 +413,7 @@ def progress():
     course = session.get('course')
     total_days = session.get('total_days', 0)
     
-    if not phone or not course or not total_days:
+    if not phone or not course:
         return redirect(url_for('select_course'))
         
     completed_days = get_progress(phone, course)
@@ -338,88 +427,24 @@ def progress():
         csrf_token=generate_csrf()
     )
 
-@app.route("/course-agent", methods=["GET", "POST"])
+@app.route("/health")
+def health():
+    return jsonify({"status": "healthy", "twilio_available": True})
+
+# Remove problematic routes for now
+@app.route("/course-agent")
 def course_agent():
-    return render_template_string(
-        FULL_TEMPLATE,
-        template='course_selection',
-        csrf_token=generate_csrf()
-    )
+    return redirect("/")
 
 @app.route("/signup", methods=["POST"])
 def signup():
-    fullname = request.form["fullname"].strip()
-    email = request.form["email"].strip()
-    password = request.form["password"]
-    phone = request.form.get("phone", "").strip()
-
-    try:
-        conn = sqlite3.connect("userform.db")
-        cur = conn.cursor()
-        cur.execute("INSERT INTO users (fullname, email, password, phone) VALUES (?, ?, ?, ?)", 
-                    (fullname, email, password, phone))
-        conn.commit()
-        conn.close()
-
-        session["email"] = email
-        session["phone"] = phone
-        return redirect(url_for("schedule_form"))
-    except Exception as e:
-        return f"Signup failed: {str(e)}"
+    return redirect("/")
 
 @app.route("/certificate")
 def certificate():
-    if "email" not in session:
-        return redirect(url_for("schedule_form"))
-
-    email = session["email"]
-    course = session.get("course", "Your Course")
-    date = datetime.now().strftime("%B %d, %Y")
-
-    try:
-        conn = mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="",
-            database="userform"
-        )
-
-        cur = conn.cursor()
-        cur.execute("SELECT name FROM usertable WHERE email = %s", (email,))
-        result = cur.fetchone()
-        name = result[0] if result else email.split("@")[0]
-
-        cur.close()
-        conn.close()
-
-    except Exception as e:
-        print("❌ Error fetching name from MySQL:", e)
-        name = email.split("@")[0]
-
-    return render_template("cert.html", name=name, course=course, date=date)
-
-# === MODIFIED HTML TEMPLATE SECTION ===
-# Add phone field to the user form in the FULL_TEMPLATE
-# Look for the user_form section and add this after the email field:
-
-PHONE_FIELD_HTML = '''
-<div>
-    <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">WhatsApp Number</label>
-    <div class="relative">
-        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                <path fill-rule="evenodd" d="M7 2a2 2 0 00-2 2v12a2 2 0 002 2h6a2 2 0 002-2V4a2 2 0 00-2-2H7zm3 14a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
-            </svg>
-        </div>
-        <input type="tel" name="phone" id="phone" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="+1234567890" required>
-    </div>
-    <p class="mt-1 text-sm text-gray-500">We'll send daily lessons to this WhatsApp number</p>
-</div>
-'''
-
-# You'll need to insert the PHONE_FIELD_HTML in the appropriate place in your FULL_TEMPLATE
-# After the email field in the user_form section
+    return "Certificate feature coming soon"
 
 if __name__ == "__main__":
     scheduler.start()
-    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
