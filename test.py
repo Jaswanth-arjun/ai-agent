@@ -979,11 +979,14 @@ def certificate():
     date = datetime.now().strftime("%B %d, %Y")
 
     try:
-        conn = mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="",
-            database="userform"
+        conn = pymysql.connect(
+    host="localhost",
+    user="root",
+    password="",
+    database="userform",
+    charset='utf8mb4',
+    cursorclass=pymysql.cursors.DictCursor
+)
         )
 
         cur = conn.cursor()
@@ -1003,4 +1006,5 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
 
