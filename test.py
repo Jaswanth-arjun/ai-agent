@@ -47,7 +47,7 @@ def reset_progress(email, course):
 
 # === IMPROVED WHATSAPP FUNCTIONS ===
 def send_whatsapp_message(phone_number, message):
-    """Send WhatsApp via GreenAPI - 100 FREE messages daily"""
+    """Send WhatsApp via GreenAPI - WITH PROPER ERROR HANDLING"""
     try:
         print(f"📱 Sending WhatsApp via GreenAPI to {phone_number}...")
         
@@ -71,19 +71,36 @@ def send_whatsapp_message(phone_number, message):
             "Content-Type": "application/json"
         }
         
-        response = requests.post(url, json=payload, headers=headers)
+        print(f"🔧 API Details:")
+        print(f"   URL: {url}")
+        print(f"   Phone: {clean_phone}")
+        print(f"   Message length: {len(message)}")
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        
+        print(f"📡 Response Status: {response.status_code}")
+        print(f"📡 Response Text: {response.text}")
         
         if response.status_code == 200:
             print(f"✅ REAL WhatsApp sent successfully to {clean_phone}!")
             return True
+        elif response.status_code == 401:
+            print(f"❌ GREENAPI 401 ERROR: Unauthorized - Check your credentials and WhatsApp linking")
+            print(f"💡 Go to: https://console.green-api.com/ and check:")
+            print(f"   1. Is WhatsApp linked? (Scan QR code)")
+            print(f"   2. Is instance status 'Authorized'?")
+            print(f"   3. Are API credentials correct?")
+            return False
         else:
             print(f"❌ GreenAPI failed: {response.status_code} - {response.text}")
-            # Fallback to simulation
-            return send_whatsapp_fallback(phone_number, message)
+            return False
             
+    except requests.exceptions.Timeout:
+        print(f"❌ GreenAPI timeout - server took too long to respond")
+        return False
     except Exception as e:
         print(f"❌ GreenAPI error: {str(e)}")
-        return send_whatsapp_fallback(phone_number, message)
+        return False
 
 def send_whatsapp_fallback(phone_number, message):
     """Fallback method with simulation"""
@@ -225,9 +242,29 @@ def remove_existing_jobs(email, course):
             print(f"🗑️ Removed old job: {job_id}")
         except Exception as e:
             print(f"⚠️ Could not remove job {job_id}: {e}")
-
+def check_greenapi_status():
+    """Check if GreenAPI is properly configured"""
+    try:
+        id_instance = "7105332961"
+        api_token = "25ed05d04b7642c0af21cfcfa34b8d9f9aa413f0de3c4717a8"
+        
+        url = f"https://api.green-api.com/waInstance{id_instance}/getStateInstance/{api_token}"
+        response = requests.get(url, timeout=10)
+        
+        print(f"🔍 GreenAPI Status Check: {response.status_code}")
+        if response.status_code == 200:
+            state_data = response.json()
+            print(f"📱 Instance State: {state_data}")
+            return state_data.get('stateInstance') == 'authorized'
+        else:
+            print(f"❌ GreenAPI not accessible: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ GreenAPI status check failed: {e}")
+        return False
 def schedule_course(email, course, days, time_str, phone_number):
-    """Schedule course with TESTING MODE support"""
+    """Schedule course with TESTING MODE support - FIXED VERSION"""
     try:
         print(f"🎯 Scheduling {course} for {email}, {days} days, phone: {phone_number}")
         
@@ -236,7 +273,7 @@ def schedule_course(email, course, days, time_str, phone_number):
         # Remove any existing jobs for this user/course
         remove_existing_jobs(email, course)
         
-        # Send welcome message immediately
+        # === FIX: IMPROVED WELCOME MESSAGE HANDLING ===
         welcome_msg = f"""🎓 *Welcome to {course}!*
 
 You've successfully enrolled in our {days}-day course! 
@@ -251,15 +288,40 @@ Your first lesson is on its way! Get ready to learn! 🚀
 ---
 📚 LearnHub - Your Learning Journey"""
         
-        send_whatsapp_message(phone_number, welcome_msg)
-        print("✅ Welcome message sent")
+        print("📤 Sending welcome message...")
         
-        # Schedule lessons based on TESTING MODE
+        # Try multiple times to send welcome message
+        max_retries = 2
+        welcome_sent = False
+        
+        for attempt in range(max_retries):
+            print(f"🔄 Welcome message attempt {attempt + 1}/{max_retries}...")
+            welcome_sent = send_whatsapp_message(phone_number, welcome_msg)
+            
+            if welcome_sent:
+                print("✅ Welcome message sent successfully!")
+                break
+            else:
+                print(f"❌ Welcome message attempt {attempt + 1} failed")
+                if attempt < max_retries - 1:  # Don't sleep on last attempt
+                    time.sleep(2)  # Wait before retry
+        
+        # If all attempts failed, use ultimate fallback
+        if not welcome_sent:
+            print("🚨 All welcome message attempts failed, using ultimate fallback...")
+            print(f"💌 [FALLBACK] Welcome message would be sent to {phone_number}")
+            print(f"📝 Message: {welcome_msg[:100]}...")
+            # Still continue with scheduling even if welcome fails
+        
+        # === FIX: BETTER SCHEDULING LOGIC ===
+        print(f"📅 Setting up {days} lessons...")
+        
+        scheduled_count = 0
         for i in range(1, days + 1):
             if TESTING_MODE:
                 # TESTING: Schedule each lesson 1 minute apart
                 scheduled_time = now + timedelta(minutes=(i * MINUTES_PER_DAY))
-                print(f"🧪 TEST MODE: Day {i} in {i} minutes at {scheduled_time}")
+                time_info = f"in {i} minutes"
             else:
                 # PRODUCTION: Schedule for specific time each day
                 time_obj = datetime.strptime(time_str, "%I:%M %p")
@@ -267,35 +329,63 @@ Your first lesson is on its way! Get ready to learn! 🚀
                 scheduled_time = scheduled_time.replace(
                     hour=time_obj.hour, 
                     minute=time_obj.minute, 
-                    second=0
+                    second=0, 
+                    microsecond=0
                 )
-                print(f"📅 PRODUCTION: Day {i} at {scheduled_time}")
+                time_info = f"at {scheduled_time.strftime('%Y-%m-%d %H:%M')}"
             
             job_id = f"{email}_{course}_day{i}"
             
-            scheduler.add_job(
-                scheduled_whatsapp_job,
-                'date',
-                run_date=scheduled_time,
-                args=[email, course, i, days, phone_number],
-                id=job_id,
-                replace_existing=True
-            )
-            print(f"✅ Scheduled: {job_id} for {scheduled_time}")
+            try:
+                scheduler.add_job(
+                    scheduled_whatsapp_job,
+                    'date',
+                    run_date=scheduled_time,
+                    args=[email, course, i, days, phone_number],
+                    id=job_id,
+                    replace_existing=True
+                )
+                print(f"✅ Scheduled: Day {i} {time_info}")
+                scheduled_count += 1
+                
+            except Exception as job_error:
+                print(f"❌ Failed to schedule Day {i}: {job_error}")
+                # Continue with other days even if one fails
         
-        # Store course info
+        # === FIX: BETTER SESSION MANAGEMENT ===
         reset_progress(email, course)
         session['email'] = email
         session['course'] = course
         session['total_days'] = int(days)
         session['phone_number'] = phone_number
         session['scheduled_at'] = now.isoformat()
+        session['welcome_sent'] = welcome_sent  # Track if welcome was sent
         
-        print(f"🎉 Course scheduling COMPLETE: {days} lessons scheduled")
-        return True
+        print(f"🎉 Course scheduling COMPLETE: {scheduled_count}/{days} lessons scheduled")
+        
+        # === FIX: IMMEDIATE FIRST LESSON IN TEST MODE ===
+        if TESTING_MODE and scheduled_count > 0:
+            print("🚀 TEST MODE: Sending first lesson immediately...")
+            # Schedule first lesson to run in 10 seconds instead of 1 minute
+            immediate_time = now + timedelta(seconds=10)
+            immediate_job_id = f"{email}_{course}_day1_immediate"
+            
+            scheduler.add_job(
+                scheduled_whatsapp_job,
+                'date',
+                run_date=immediate_time,
+                args=[email, course, 1, days, phone_number],
+                id=immediate_job_id,
+                replace_existing=True
+            )
+            print(f"✅ Immediate lesson scheduled in 10 seconds")
+        
+        return scheduled_count > 0  # Return True if at least one lesson scheduled
         
     except Exception as e:
         print(f"❌ Failed to schedule course: {str(e)}")
+        import traceback
+        traceback.print_exc()  # Print full error details
         return False
 
 # === TESTING ROUTES ===
@@ -362,7 +452,33 @@ def reset_course():
     reset_progress(email, course)
     remove_existing_jobs(email, course)
     return "Course reset! Progress cleared and jobs removed."
-
+@app.route("/test-whatsapp-direct")
+def test_whatsapp_direct():
+    """Test WhatsApp directly with a simple message"""
+    test_phone = "9392443002"
+    test_message = "🔧 TEST: LearnHub WhatsApp is working! 🎉"
+    
+    print("🧪 DIRECT WHATSAPP TEST...")
+    success = send_whatsapp_message(test_phone, test_message)
+    
+    if success:
+        return """
+        <h1>✅ WhatsApp Test Successful!</h1>
+        <p>Check your phone for the test message.</p>
+        <a href="/">Go Home</a>
+        """
+    else:
+        return """
+        <h1>❌ WhatsApp Test Failed</h1>
+        <p>Check your GreenAPI configuration:</p>
+        <ol>
+            <li>Go to <a href="https://console.green-api.com/" target="_blank">GreenAPI Console</a></li>
+            <li>Make sure WhatsApp is linked (scan QR code)</li>
+            <li>Check that instance status is "Authorized"</li>
+            <li>Verify your API credentials</li>
+        </ol>
+        <a href="/">Go Home</a>
+        """
 # === COMPLETE HTML TEMPLATE WITH ALL COURSES ===
 FULL_TEMPLATE = '''
 <!DOCTYPE html>
@@ -1222,7 +1338,8 @@ if __name__ == "__main__":
         print(f"⏰ 1 minute = 1 day")
         print("🔗 Test routes available:")
         print("   /test-send-now - Send next lesson immediately")
-        print("   /test-progress - Check current progress")
+        print("   /test-progress - Check current progress") 
+        print("   /test-whatsapp-direct - Test WhatsApp connection")  # ← ADD THIS
         print("   /force-complete - Mark course as complete")
         print("   /reset-course - Reset course progress")
     
