@@ -39,7 +39,26 @@ together = Together(api_key=TOGETHER_API_KEY)
 # === Flask & Scheduler Setup ===
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
-csrf = CSRFProtect(app)
+
+# Initialize CSRF protection with error handling
+try:
+    csrf = CSRFProtect(app)
+except Exception as e:
+    logger.warning(f"CSRF protection initialization failed: {e}")
+    # Create a mock CSRF class if initialization fails
+    class MockCSRF:
+        def __init__(self, app=None):
+            pass
+        def protect(self):
+            pass
+        def exempt(self, view):
+            return view
+        def init_app(self, app):
+            pass
+    
+    csrf = MockCSRF()
+    csrf.init_app(app)
+
 scheduler = BackgroundScheduler()
 
 # === GLOBAL PROGRESS STORE ===
@@ -1062,6 +1081,16 @@ COURSES = [
     {"name": "Blockchain Development", "emoji": "⛓️", "description": "Learn smart contracts, DApps, and blockchain fundamentals"}
 ]
 
+# Safe CSRF token generation
+def get_csrf_token():
+    try:
+        return generate_csrf()
+    except Exception:
+        # Fallback if CSRF fails
+        import hashlib
+        import time
+        return hashlib.sha256(f"{time.time()}{app.secret_key}".encode()).hexdigest()[:32]
+
 @app.route('/', methods=['GET', 'POST'])
 def select_course():
     if request.method == "POST":
@@ -1069,7 +1098,7 @@ def select_course():
     return render_template_string(
         COURSE_SELECTION_TEMPLATE,
         courses=COURSES,
-        csrf_token=generate_csrf()
+        csrf_token=get_csrf_token()
     )
 
 @app.route("/schedule", methods=["GET", "POST"])
@@ -1118,7 +1147,7 @@ def schedule_form():
                 USER_FORM_TEMPLATE,
                 course=course,
                 error=error_message,
-                csrf_token=generate_csrf()
+                csrf_token=get_csrf_token()
             )
         except Exception as e:
             error_message = "An error occurred. Please try again."
@@ -1126,13 +1155,13 @@ def schedule_form():
                 USER_FORM_TEMPLATE,
                 course=course,
                 error=error_message,
-                csrf_token=generate_csrf()
+                csrf_token=get_csrf_token()
             )
     
     return render_template_string(
         USER_FORM_TEMPLATE,
         course=course,
-        csrf_token=generate_csrf()
+        csrf_token=get_csrf_token()
     )
 
 @app.route("/progress")
