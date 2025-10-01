@@ -3,3 +3,4 @@ twilio==8.10.0
 apscheduler==3.10.4
 together==1.5.26
 gunicorn==21.2.0
+flask-wtf==1.2.1
