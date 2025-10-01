@@ -12,6 +12,7 @@ from reportlab.pdfgen import canvas
 from datetime import datetime, timedelta
 import mysql.connector
 import time
+import traceback
 
 # === CONFIGURATION ===
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
@@ -263,6 +264,10 @@ def check_greenapi_status():
     except Exception as e:
         print(f"❌ GreenAPI status check failed: {e}")
         return False
+            
+    except Exception as e:
+        print(f"❌ GreenAPI status check failed: {e}")
+        return False
 def schedule_course(email, course, days, time_str, phone_number):
     """Schedule course with TESTING MODE support - FIXED VERSION"""
     try:
@@ -272,7 +277,12 @@ def schedule_course(email, course, days, time_str, phone_number):
         
         # Remove any existing jobs for this user/course
         remove_existing_jobs(email, course)
-        
+        print("🔍 Checking GreenAPI status...")
+        greenapi_status = check_greenapi_status()
+        if not greenapi_status:
+            print("❌ GreenAPI not authorized - messages will use fallback")
+        else:
+            print("✅ GreenAPI is authorized and ready!")
         # === FIX: IMPROVED WELCOME MESSAGE HANDLING ===
         welcome_msg = f"""🎓 *Welcome to {course}!*
 
@@ -1344,3 +1354,4 @@ if __name__ == "__main__":
         print("   /reset-course - Reset course progress")
     
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
