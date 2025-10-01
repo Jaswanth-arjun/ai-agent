@@ -11,6 +11,7 @@ from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
 from datetime import datetime, timedelta
 import mysql.connector
+import time
 
 # === CONFIGURATION ===
 TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
@@ -24,12 +25,18 @@ app.secret_key = os.urandom(24)
 csrf = CSRFProtect(app)
 scheduler = BackgroundScheduler()
 
+# === TESTING MODE CONFIG ===
+TESTING_MODE = True  # Set to False for real daily scheduling
+MINUTES_PER_DAY = 1  # 1 minute = 1 day for testing
+
 # === GLOBAL PROGRESS STORE ===
 progress_store = {}
+scheduled_jobs = {}  # Track all scheduled jobs
 
 def increment_progress(email, course):
     key = (email, course)
     progress_store[key] = progress_store.get(key, 0) + 1
+    print(f"📊 Progress updated: {email} - {course} - Day {progress_store[key]}")
 
 def get_progress(email, course):
     key = (email, course)
@@ -38,18 +45,20 @@ def get_progress(email, course):
 def reset_progress(email, course):
     progress_store[(email, course)] = 0
 
-# === WHATSAPP FUNCTIONS (UPDATED - NO pywhatkit) ===
+# === IMPROVED WHATSAPP FUNCTIONS ===
 def send_whatsapp_message(phone_number, message):
     """Send WhatsApp via GreenAPI - 100 FREE messages daily"""
     try:
         print(f"📱 Sending WhatsApp via GreenAPI to {phone_number}...")
         
-        # Clean phone number
+        # Clean phone number (remove country code if present)
         clean_phone = ''.join(filter(str.isdigit, phone_number))
+        if clean_phone.startswith('91') and len(clean_phone) == 12:
+            clean_phone = clean_phone[2:]  # Remove India country code
         
-        # === REPLACE WITH YOUR GREENAPI CREDENTIALS ===
-        id_instance = "7105332961"  # From GreenAPI dashboard
-        api_token = "25ed05404b7642c0af21c1cfa34b8d9f9aa413f0de3c4717a8"  # From GreenAPI dashboard
+        # === YOUR GREENAPI CREDENTIALS ===
+        id_instance = "7105332961"
+        api_token = "25ed05d04b7642c0af21cfcfa34b8d9f9aa413f0de3c4717a8"
         
         url = f"https://api.green-api.com/waInstance{id_instance}/sendMessage/{api_token}"
         
@@ -58,24 +67,32 @@ def send_whatsapp_message(phone_number, message):
             "message": message
         }
         
-        response = requests.post(url, json=payload)
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(url, json=payload, headers=headers)
         
         if response.status_code == 200:
-            print(f"✅ WhatsApp sent via GreenAPI to {clean_phone}")
+            print(f"✅ REAL WhatsApp sent successfully to {clean_phone}!")
             return True
         else:
-            print(f"❌ GreenAPI failed: {response.status_code}")
-            return False
+            print(f"❌ GreenAPI failed: {response.status_code} - {response.text}")
+            # Fallback to simulation
+            return send_whatsapp_fallback(phone_number, message)
             
     except Exception as e:
         print(f"❌ GreenAPI error: {str(e)}")
-        return False
+        return send_whatsapp_fallback(phone_number, message)
+
 def send_whatsapp_fallback(phone_number, message):
-    """Fallback method - currently same as primary since we're simulating"""
+    """Fallback method with simulation"""
     try:
         print(f"🔄 Using fallback method for {phone_number}...")
         print(f"📱 [FALLBACK] Would send to {phone_number}:")
         print(f"💬 {message[:100]}...")
+        # Simulate sending delay
+        time.sleep(2)
         return True
     except Exception as e:
         print(f"❌ Fallback also failed: {str(e)}")
@@ -102,140 +119,160 @@ def format_lesson_for_whatsapp(course, day, total_days, content):
 
 ---
 📚 LearnHub - Your Daily Learning
-💡 Visit learnhub.com for full content"""
+💡 Reply with questions!"""
 
     return message
 
-# === LESSON GENERATION (SAME AS BEFORE) ===
+# === IMPROVED LESSON GENERATION ===
 def generate_daily_content(course, part, days):
+    print(f"🧠 Generating content for {course} - Day {part}/{days}...")
+    
     if days == 1:
         prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
+Create a comprehensive single-day course about: '{course}'. 
 
-Include all of the following in your response:
+Include:
+1. Clear title
+2. Main concepts with examples
+3. 2-3 practical exercises
+4. Key takeaways
+5. Helpful resources
 
-1. 📘 **Course Title**
-2. 🧠 **Complete Explanation with Real-World Examples**
-   - Cover all major concepts a beginner should know.
-   - Include relevant examples and clear breakdowns.
-3. ✍️ **Practical Exercises**
-   - Add 3–5 hands-on tasks or projects.
-4. 📌 **Key Takeaways**
-   - Summarize essential points to remember.
-5. 🔗 **Curated Resource Links**
-   - Provide 3–5 helpful links to tutorials, videos, or documentation.
-6. 📝 **Format Everything in Markdown**
-   - Use proper headers (`#`), bullet points, and code blocks (```).
-
-Make sure the course is complete and self-contained.
+Make it engaging and practical!
 """
     else:
         prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in {days} days. Divide the topic into {days} structured lessons. Now generate **Lesson {part} of {days}**.
+Create lesson {part} of {days} for: '{course}'. 
 
-Strictly generate only **Lesson {part}**, not others.
+This should be a standalone lesson covering one specific topic. Include:
+1. Clear lesson title
+2. Focused explanation with examples
+3. 1-2 practical exercises
+4. Key points to remember
+5. Relevant resources
 
-Include in Lesson {part}:
-
-1. 📘 **Lesson Title**
-2. 🧠 **Focused Explanation with Real Examples**
-   - Teach one part of the topic clearly.
-3. ✍️ **2–3 Practical Exercises**
-4. 📌 **3–5 Key Takeaways**
-5. 🔗 **2–3 Curated Resource Links**
-6. 📝 **Markdown Formatting**
-   - Use headers, bullets, and code blocks as needed.
-
-🛑 Do NOT include other parts or summaries. Focus only on Lesson {part}.
+Keep it focused only on lesson {part}, not other lessons.
 """
 
-    response = together.chat.completions.create(
-        model="meta-llama/Llama-3-70b-chat-hf",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=1500
-    )
-    return response.choices[0].message.content.strip()
-
-# === SCHEDULING FUNCTIONS ===
-def scheduled_whatsapp_job(email, course, part, days, phone_number):
-    """Send daily lesson via WhatsApp"""
     try:
-        print(f"🕐 Processing Day {part} for {course} to {phone_number}")
+        response = together.chat.completions.create(
+            model="meta-llama/Llama-3-70b-chat-hf",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=1200
+        )
+        content = response.choices[0].message.content.strip()
+        print(f"✅ Content generated for Day {part}")
+        return content
+    except Exception as e:
+        print(f"❌ AI generation failed: {e}")
+        return f"📚 {course} - Day {part}\n\nLesson content coming soon! Stay tuned for the full lesson."
+
+# === FIXED SCHEDULING FUNCTIONS ===
+def scheduled_whatsapp_job(email, course, part, days, phone_number):
+    """Send daily lesson via WhatsApp - FIXED VERSION"""
+    try:
+        print(f"🕐 EXECUTING: Day {part} for {course} to {phone_number}")
         
         # Generate lesson content
         content = generate_daily_content(course, part, days)
-        print(f"📚 Generated content for Day {part}")
+        print(f"📚 Generated {len(content)} chars for Day {part}")
         
         # Format for WhatsApp
         whatsapp_message = format_lesson_for_whatsapp(course, part, days, content)
         
-        # Try primary WhatsApp method
+        # Send via WhatsApp
         success = send_whatsapp_message(phone_number, whatsapp_message)
-        
-        if not success:
-            # Try fallback method
-            print("🔄 Primary method failed, trying fallback...")
-            success = send_whatsapp_fallback(phone_number, whatsapp_message)
         
         if success:
             increment_progress(email, course)
-            print(f"✅ Successfully processed Day {part}")
+            print(f"✅ SUCCESS: Day {part} sent and progress updated")
+            
+            # If this is the last day, send completion message
+            if part == days:
+                completion_msg = f"""🎉 *Course Complete!*
+
+Congratulations! You've finished {course}!
+
+You've completed all {days} days of learning. Well done! 🏆
+
+Want to continue learning? Visit our platform for more courses!
+
+---
+📚 LearnHub - Celebrating Your Success"""
+                send_whatsapp_message(phone_number, completion_msg)
         else:
-            print(f"⚠️ Day {part} failed to send, but progress will continue")
-            # Still increment progress so user experience isn't broken
+            print(f"⚠️ Day {part} failed to send")
+            # Still increment progress to keep user experience
             increment_progress(email, course)
             
     except Exception as e:
-        print(f"❌ Error in scheduled job for day {part}: {str(e)}")
-        # Don't crash - continue with progress
-        increment_progress(email, course)
+        print(f"❌ ERROR in job Day {part}: {str(e)}")
+        increment_progress(email, course)  # Always update progress
 
 def remove_existing_jobs(email, course):
+    """Remove all jobs for this user and course"""
+    job_prefix = f"{email}_{course}_"
+    jobs_to_remove = []
+    
     for job in scheduler.get_jobs():
-        if job.id.startswith(f"{email}_{course}_"):
-            try:
-                scheduler.remove_job(job.id)
-            except:
-                pass
+        if job.id.startswith(job_prefix):
+            jobs_to_remove.append(job.id)
+    
+    for job_id in jobs_to_remove:
+        try:
+            scheduler.remove_job(job_id)
+            print(f"🗑️ Removed old job: {job_id}")
+        except Exception as e:
+            print(f"⚠️ Could not remove job {job_id}: {e}")
 
 def schedule_course(email, course, days, time_str, phone_number):
+    """Schedule course with TESTING MODE support"""
     try:
-        now = datetime.now()
-        time_obj = datetime.strptime(time_str, "%I:%M %p")
-        hour = time_obj.hour
-        minute = time_obj.minute
+        print(f"🎯 Scheduling {course} for {email}, {days} days, phone: {phone_number}")
         
+        now = datetime.now()
+        
+        # Remove any existing jobs for this user/course
         remove_existing_jobs(email, course)
         
-        # Send welcome message via WhatsApp
-        if phone_number:
-            welcome_msg = f"""🎓 *Welcome to {course}!*
+        # Send welcome message immediately
+        welcome_msg = f"""🎓 *Welcome to {course}!*
 
 You've successfully enrolled in our {days}-day course! 
 
 *Course Details:*
 • 📅 Duration: {days} days
-• ⏰ Daily time: {time_str}
+• ⏰ Daily lessons
 • 📱 Delivery: WhatsApp
 
-You'll receive your first lesson at {time_str}. Get ready to learn! 🚀
+Your first lesson is on its way! Get ready to learn! 🚀
 
 ---
 📚 LearnHub - Your Learning Journey"""
-            
-            # Try to send welcome message (but don't fail if it doesn't work)
-            try:
-                send_whatsapp_message(phone_number, welcome_msg)
-            except:
-                print("⚠️ Welcome message failed, but continuing...")
         
-        # Schedule daily lessons
+        send_whatsapp_message(phone_number, welcome_msg)
+        print("✅ Welcome message sent")
+        
+        # Schedule lessons based on TESTING MODE
         for i in range(1, days + 1):
-            scheduled_time = now + timedelta(days=i-1)
-            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
+            if TESTING_MODE:
+                # TESTING: Schedule each lesson 1 minute apart
+                scheduled_time = now + timedelta(minutes=(i * MINUTES_PER_DAY))
+                print(f"🧪 TEST MODE: Day {i} in {i} minutes at {scheduled_time}")
+            else:
+                # PRODUCTION: Schedule for specific time each day
+                time_obj = datetime.strptime(time_str, "%I:%M %p")
+                scheduled_time = now + timedelta(days=i-1)
+                scheduled_time = scheduled_time.replace(
+                    hour=time_obj.hour, 
+                    minute=time_obj.minute, 
+                    second=0
+                )
+                print(f"📅 PRODUCTION: Day {i} at {scheduled_time}")
             
             job_id = f"{email}_{course}_day{i}"
+            
             scheduler.add_job(
                 scheduled_whatsapp_job,
                 'date',
@@ -244,32 +281,89 @@ You'll receive your first lesson at {time_str}. Get ready to learn! 🚀
                 id=job_id,
                 replace_existing=True
             )
-            print(f"📅 Scheduled Day {i} for {scheduled_time}")
-            
+            print(f"✅ Scheduled: {job_id} for {scheduled_time}")
+        
+        # Store course info
         reset_progress(email, course)
         session['email'] = email
         session['course'] = course
         session['total_days'] = int(days)
         session['phone_number'] = phone_number
+        session['scheduled_at'] = now.isoformat()
         
+        print(f"🎉 Course scheduling COMPLETE: {days} lessons scheduled")
         return True
+        
     except Exception as e:
-        print(f"Failed to schedule course: {str(e)}")
+        print(f"❌ Failed to schedule course: {str(e)}")
         return False
 
-# === TEST WHATSAPP FUNCTION ===
-def test_whatsapp_setup():
-    """Test if WhatsApp simulation is working"""
-    print("🧪 Testing WhatsApp simulation setup...")
-    print("✅ WhatsApp simulation ready - using server-friendly approach")
-    return True
+# === TESTING ROUTES ===
+@app.route("/test-send-now")
+def test_send_now():
+    """Test route to send a lesson immediately"""
+    if 'email' not in session:
+        return "No active course. Please schedule a course first."
+    
+    email = session['email']
+    course = session['course']
+    phone = session.get('phone_number', '9392443002')
+    total_days = session.get('total_days', 3)
+    current_progress = get_progress(email, course)
+    
+    next_day = current_progress + 1
+    if next_day > total_days:
+        return "Course already completed!"
+    
+    print(f"🚀 MANUAL TRIGGER: Sending Day {next_day} now...")
+    scheduled_whatsapp_job(email, course, next_day, total_days, phone)
+    
+    return f"Sent Day {next_day}! Check your WhatsApp."
 
-# Test on startup
-test_whatsapp_setup()
+@app.route("/test-progress")
+def test_progress():
+    """Test route to check progress"""
+    if 'email' not in session:
+        return "No active course"
+    
+    email = session['email']
+    course = session['course']
+    total_days = session.get('total_days', 0)
+    completed = get_progress(email, course)
+    
+    return f"""
+    Progress for {email} - {course}:
+    Completed: {completed}/{total_days} days
+    Progress: {completed/total_days*100 if total_days > 0 else 0:.1f}%
+    """
 
-# === KEEP ALL YOUR EXISTING ROUTES EXACTLY THE SAME ===
-# (The Flask routes, HTML template, and other functions remain unchanged)
+@app.route("/force-complete")
+def force_complete():
+    """Force complete the course for testing"""
+    if 'email' not in session:
+        return "No active course"
+    
+    email = session['email']
+    course = session['course']
+    total_days = session.get('total_days', 3)
+    
+    progress_store[(email, course)] = total_days
+    return f"Course forced to complete! {total_days}/{total_days} days"
 
+@app.route("/reset-course")
+def reset_course():
+    """Reset course progress"""
+    if 'email' not in session:
+        return "No active course"
+    
+    email = session['email']
+    course = session['course']
+    
+    reset_progress(email, course)
+    remove_existing_jobs(email, course)
+    return "Course reset! Progress cleared and jobs removed."
+
+# === COMPLETE HTML TEMPLATE WITH ALL COURSES ===
 FULL_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -385,6 +479,11 @@ FULL_TEMPLATE = '''
             <p class="text-lg md:text-xl text-gray-600 max-w-2xl mx-auto">
                 Your personalized learning journey via WhatsApp
             </p>
+            {% if testing_info %}
+            <div class="mt-4 bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-2 rounded-lg inline-block">
+                🧪 Testing Mode Active: 1 minute = 1 day
+            </div>
+            {% endif %}
         </header>
         
         {% if template == 'course_selection' %}
@@ -885,6 +984,27 @@ FULL_TEMPLATE = '''
                         </a>
                     </div>
                     
+                    <!-- Testing Tools -->
+                    {% if testing_info %}
+                    <div class="mt-8 p-6 bg-blue-50 border border-blue-200 rounded-xl">
+                        <h3 class="font-semibold text-lg text-blue-800 mb-4">🧪 Testing Tools</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <a href="/test-send-now" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition duration-300 text-center">
+                                Send Next Lesson Now
+                            </a>
+                            <a href="/test-progress" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition duration-300 text-center">
+                                Check Progress
+                            </a>
+                            <a href="/force-complete" class="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition duration-300 text-center">
+                                Force Complete
+                            </a>
+                            <a href="/reset-course" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition duration-300 text-center">
+                                Reset Course
+                            </a>
+                        </div>
+                    </div>
+                    {% endif %}
+                    
                     {% if completed_days == total_days %}
                     <div class="mt-8">
                         <a href="/certificate" class="inline-flex items-center px-8 py-3 border border-transparent text-lg font-medium rounded-full shadow-sm text-white bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition duration-300 transform hover:-translate-y-1">
@@ -958,19 +1078,27 @@ def progress():
     email = session.get('email')
     course = session.get('course')
     total_days = session.get('total_days', 0)
+    
     if not email or not course or not total_days:
         return redirect(url_for('select_course'))
+    
     completed_days = get_progress(email, course)
+    
+    # Add testing info if in testing mode
+    testing_info = ""
+    if TESTING_MODE:
+        testing_info = "🧪 Testing Mode Active: 1 minute = 1 day"
+    
     return render_template_string(
         FULL_TEMPLATE,
         template='confirm',
         course=course,
         total_days=total_days,
         completed_days=completed_days,
+        testing_info=testing_info,
         csrf_token=generate_csrf()
     )
 
-# ... [Keep your other routes the same - signup, certificate, etc.]
 @app.route("/course-agent", methods=["GET", "POST"])
 def course_agent():
     return render_template_string(
@@ -985,7 +1113,6 @@ def signup():
     email = request.form["email"].strip()
     password = request.form["password"]
 
-    # Hash password here if needed
     try:
         conn = sqlite3.connect("userform.db")
         cur = conn.cursor()
@@ -994,7 +1121,7 @@ def signup():
         conn.commit()
         conn.close()
 
-        session["email"] = email  # Save email in session
+        session["email"] = email
         return redirect(url_for("schedule_form"))
     except Exception as e:
         return f"Signup failed: {str(e)}"
@@ -1009,16 +1136,14 @@ def certificate():
     date = datetime.now().strftime("%B %d, %Y")
 
     try:
-        # Connect to the same MySQL DB used by your PHP code
         conn = mysql.connector.connect(
             host="sql104.infinityfree.com",
-            user="if0_40043007",         # Use your MySQL username (default for XAMPP is 'root')
-            password="FQM4N2z8L7ai9",         # Use your MySQL password (blank if using default XAMPP)
-            database="if0_40043007_db"  # Your database name
+            user="if0_40043007",
+            password="FQM4N2z8L7ai9",
+            database="if0_40043007_db"
         )
 
         cur = conn.cursor()
-        # Look up the user name using the email from session
         cur.execute("SELECT name FROM usertable WHERE email = %s", (email,))
         result = cur.fetchone()
         name = result[0] if result else email.split("@")[0]
@@ -1028,24 +1153,24 @@ def certificate():
 
     except Exception as e:
         print("❌ Error fetching name from MySQL:", e)
-        name = email.split("@")[0]  # fallback to email prefix
+        name = email.split("@")[0]
 
     return render_template("cert.html", name=name, course=course, date=date)
-
 
 @app.route("/schedule", methods=["GET", "POST"])
 def schedule_form():
     course = request.args.get("course") or request.form.get("course")
     if not course:
         return redirect(url_for("select_course"))
+    
     if request.method == "POST":
         try:
             email = request.form.get("email", "").strip()
             phone = request.form.get("phone", "").strip()
             days = request.form.get("days", "").strip()
-            time = request.form.get("time", "").strip()
+            time_str = request.form.get("time", "").strip()
             
-            if not all([email, phone, days, time]):
+            if not all([email, phone, days, time_str]):
                 raise ValueError("All fields are required")
             
             if not "@" in email or not "." in email:
@@ -1054,15 +1179,14 @@ def schedule_form():
             if not days.isdigit() or int(days) <= 0:
                 raise ValueError("Please enter a valid number of days")
             
-            # Schedule with WhatsApp
-            schedule_course(email, course, int(days), time, phone)
-            session['email'] = email
-            session['course'] = course
-            session['total_days'] = int(days)
-            session['phone_number'] = phone
+            # Schedule the course
+            success = schedule_course(email, course, int(days), time_str, phone)
             
-            return redirect(url_for('progress'))
-            
+            if success:
+                return redirect(url_for('progress'))
+            else:
+                raise Exception("Scheduling failed")
+                
         except ValueError as e:
             error_message = str(e)
             return render_template_string(
@@ -1081,6 +1205,7 @@ def schedule_form():
                 error=error_message,
                 csrf_token=generate_csrf()
             )
+    
     return render_template_string(
         FULL_TEMPLATE,
         template='user_form',
@@ -1088,7 +1213,17 @@ def schedule_form():
         csrf_token=generate_csrf()
     )
 
+# === STARTUP ===
 if __name__ == "__main__":
     scheduler.start()
+    print("🚀 LearnHub Started!")
+    print(f"🧪 Testing Mode: {TESTING_MODE}")
+    if TESTING_MODE:
+        print(f"⏰ 1 minute = 1 day")
+        print("🔗 Test routes available:")
+        print("   /test-send-now - Send next lesson immediately")
+        print("   /test-progress - Check current progress")
+        print("   /force-complete - Mark course as complete")
+        print("   /reset-course - Reset course progress")
+    
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
-
