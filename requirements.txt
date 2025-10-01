@@ -5,7 +5,7 @@ WTForms==3.0.1
 Flask-WTF==1.1.1
 APScheduler==3.10.1
 twilio==8.10.0
-together==1.0.2
+together==1.5.26
 mysql-connector-python==8.1.0
 reportlab==4.0.4
 gunicorn==21.2.0
