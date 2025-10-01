@@ -1,5 +1,5 @@
 flask==2.3.3
 twilio==8.10.0
 apscheduler==3.10.4
-together==1.0.3
+together==1.5.26
 gunicorn==21.2.0
