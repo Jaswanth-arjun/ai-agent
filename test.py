@@ -55,75 +55,123 @@ def reset_progress(phone, course):
     progress_store[(phone, course)] = 0
     logger.info(f"🔄 Progress reset: {phone} - {course}")
 
-def generate_daily_content(course, part, days):
-    """Generate course content using Together AI"""
-    try:
-        if days == 1:
-            prompt = f"""
-Create a comprehensive single-day course for: '{course}'.
-
-Structure your response as follows:
-
-📘 **{course} - Complete Course**
-
-🧠 **Core Concepts**
-- Explain the 3-5 most important concepts
-- Include practical examples for each
-
-💡 **Hands-On Practice**
-- Provide 2-3 practical exercises
-- Include step-by-step instructions
-
-🔍 **Key Takeaways**
-- List 5-7 essential points to remember
-
-🚀 **Next Steps**
-- Suggest how to continue learning
-
-Make it engaging and practical for a beginner!
-"""
+def split_long_message(message, max_length=1500):
+    """Split long messages into multiple parts that fit within WhatsApp limits"""
+    if len(message) <= max_length:
+        return [message]
+    
+    parts = []
+    current_part = ""
+    
+    # Split by sections first
+    sections = message.split('\n\n')
+    
+    for section in sections:
+        # If adding this section would exceed limit, start new part
+        if len(current_part) + len(section) + 2 > max_length and current_part:
+            parts.append(current_part.strip())
+            current_part = section
         else:
-            prompt = f"""
-Create lesson {part} of {days} for: '{course}'.
+            if current_part:
+                current_part += '\n\n' + section
+            else:
+                current_part = section
+    
+    if current_part:
+        parts.append(current_part.strip())
+    
+    # Add part indicators
+    if len(parts) > 1:
+        for i, part in enumerate(parts):
+            parts[i] = f"📚 Part {i+1}/{len(parts)}\n\n{part}"
+    
+    logger.info(f"✂️ Split message into {len(parts)} parts")
+    return parts
 
-Structure your response as follows:
+def generate_detailed_course_content(course, part, total_days):
+    """Generate detailed course content with YouTube links and references"""
+    try:
+        prompt = f"""
+Create a DETAILED lesson {part} of {total_days} for the course: '{course}'.
 
-📘 **Day {part}: [Specific Topic for {course}]**
+Structure the lesson with these EXACT sections:
 
-🎯 **Today's Learning Objectives**
-- List 2-3 specific goals for this lesson
+🎯 DAY {part} OBJECTIVES:
+• List 3-4 specific learning objectives for this day
 
-🧠 **Core Content**
-- Explain one key concept in detail
-- Include practical examples
+🧠 CORE CONCEPTS:
+• Explain 2-3 main concepts in detail with examples
+• Use simple, clear explanations
+• Include practical real-world applications
 
-💻 **Practice Exercise**
-- Provide one hands-on exercise
-- Include clear instructions
+💻 HANDS-ON EXERCISE:
+• Provide one practical coding/project exercise
+• Include step-by-step instructions
+• Mention expected output/result
 
-📌 **Key Points to Remember**
-- List 3-5 important takeaways
+🎥 VIDEO REFERENCES:
+• Include 2-3 relevant YouTube video links
+• Choose popular, high-quality tutorials
+• Videos should be under 15 minutes
 
-Focus only on content for Day {part}. Keep it concise and actionable!
+📚 ADDITIONAL RESOURCES:
+• Provide 2-3 web article/documentation links
+• Include official documentation if available
+• Choose beginner-friendly resources
+
+💡 KEY TAKEAWAYS:
+• Summarize 3-4 main points to remember
+• Focus on practical applications
+
+Make sure the content is comprehensive but well-structured. Include proper YouTube URLs and web links.
+
+Course: {course}
+Day: {part} of {total_days}
 """
-
-        logger.info(f"🤖 Generating content for {course} - Day {part}/{days}")
+        logger.info(f"🤖 Generating detailed content for {course} - Day {part}/{total_days}")
         response = together.chat.completions.create(
             model="meta-llama/Llama-3-70b-chat-hf",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
-            max_tokens=1000
+            max_tokens=2000
         )
         content = response.choices[0].message.content.strip()
-        logger.info(f"✅ Content generated successfully for Day {part}")
+        logger.info(f"✅ Detailed content generated for Day {part} ({len(content)} chars)")
         return content
     except Exception as e:
-        logger.error(f"❌ Error generating content: {str(e)}")
-        return f"🚀 **Day {part} of {course}**\n\n📘 **Topic Overview**\nToday we're covering key concepts from {course}. Let's dive in!\n\n💡 **Practice Task**\nTry applying these concepts in a small project.\n\n📌 **Remember**\nConsistent practice is key to mastery!"
+        logger.error(f"❌ Error generating detailed content: {str(e)}")
+        # Fallback detailed content
+        return f"""🎯 DAY {part} OBJECTIVES:
+• Understand key concepts of {course}
+• Practice with hands-on exercises
+• Explore additional learning resources
+
+🧠 CORE CONCEPTS:
+Today we focus on fundamental concepts that form the foundation of {course}. These concepts are essential for building your skills.
+
+💻 HANDS-ON EXERCISE:
+Try building a small project applying today's concepts. Start simple and gradually add complexity.
+
+🎥 VIDEO REFERENCES:
+• Search YouTube for "{course} tutorial day {part}"
+• Look for official documentation videos
+
+📚 ADDITIONAL RESOURCES:
+• Official documentation
+• MDN Web Docs (for web technologies)
+• Stack Overflow for specific questions
+
+💡 KEY TAKEAWAYS:
+• Practice consistently
+• Build projects to reinforce learning
+• Use multiple learning resources"""
 
 def send_whatsapp(to_phone, message):
-    """Send WhatsApp message via Twilio"""
+    """Send WhatsApp message via Twilio with proper length handling"""
     try:
+        # Rate limiting - wait 2 seconds between messages
+        time.sleep(2)
+        
         if not to_phone or not to_phone.startswith('+'):
             logger.error(f"❌ Invalid phone number: {to_phone}")
             return False
@@ -131,39 +179,51 @@ def send_whatsapp(to_phone, message):
         # Format phone number for WhatsApp
         whatsapp_to = f"whatsapp:{to_phone}"
         
-        # Truncate message if needed (WhatsApp has higher limits than SMS)
-        if len(message) > 4000:
-            message = message[:3997] + "..."
+        logger.info(f"📤 Sending WhatsApp ({len(message)} chars) to: {to_phone}")
         
         twilio_client.messages.create(
             body=message,
             from_=TWILIO_WHATSAPP_NUMBER,
             to=whatsapp_to
         )
-        logger.info(f"📤 Successfully sent WhatsApp to: {to_phone}")
+        logger.info(f"✅ Successfully sent WhatsApp to: {to_phone}")
         return True
     except Exception as e:
         logger.error(f"❌ Error sending WhatsApp: {str(e)}")
         return False
 
 def send_course_lesson(phone, course, day, total_days):
-    """Send a course lesson immediately"""
+    """Send a detailed course lesson with proper formatting"""
     try:
-        logger.info(f"🎯 SENDING LESSON IMMEDIATELY: {phone} - {course} - Day {day}")
+        logger.info(f"🎯 SENDING DETAILED LESSON: {phone} - {course} - Day {day}")
         
-        # Generate content
-        content = generate_daily_content(course, day, total_days)
+        # Generate detailed content
+        content = generate_detailed_course_content(course, day, total_days)
         
-        # Create the message
-        message = f"🎓 **{course} - Day {day}/{total_days}**\n\n{content}\n\n---\nReply 'STOP' to unsubscribe"
+        # Create the main message
+        header = f"🎓 {course} - Day {day}/{total_days}\n\n"
+        footer = f"\n\n---\n📚 Course Progress: {day}/{total_days} days\n💬 Reply STOP to unsubscribe"
         
-        # Send via WhatsApp
-        if send_whatsapp(phone, message):
+        full_message = header + content + footer
+        
+        # Split into multiple messages if too long
+        message_parts = split_long_message(full_message)
+        
+        # Send all parts
+        success_count = 0
+        for i, part in enumerate(message_parts):
+            if send_whatsapp(phone, part):
+                success_count += 1
+                # Add small delay between parts to avoid rate limiting
+                if i < len(message_parts) - 1:
+                    time.sleep(2)
+        
+        if success_count == len(message_parts):
             increment_progress(phone, course)
-            logger.info(f"✅ Successfully delivered Day {day} to {phone}")
+            logger.info(f"✅ Successfully delivered Day {day} ({len(message_parts)} parts) to {phone}")
             return True
         else:
-            logger.error(f"❌ Failed to send Day {day} to {phone}")
+            logger.error(f"❌ Failed to send all parts of Day {day} to {phone}")
             return False
             
     except Exception as e:
@@ -184,10 +244,10 @@ def remove_existing_jobs(phone, course):
         logger.error(f"❌ Error removing existing jobs: {str(e)}")
         return 0
 
-def schedule_course_messages_instant(phone, course, days, time_str):
-    """Schedule all course messages - ULTRA INSTANT TESTING MODE"""
+def schedule_course_messages_detailed(phone, course, days, time_str):
+    """Schedule detailed course messages with proper intervals"""
     try:
-        logger.info(f"🚀 ULTRA INSTANT MODE: Scheduling {course} for {phone} over {days} days")
+        logger.info(f"🚀 DETAILED COURSE MODE: Scheduling {course} for {phone} over {days} days")
         
         # Remove any existing jobs for this user/course
         removed_count = remove_existing_jobs(phone, course)
@@ -206,58 +266,82 @@ def schedule_course_messages_instant(phone, course, days, time_str):
         # Send welcome message immediately
         welcome_message = (
             f"Welcome to {course}! 🎉\n\n"
-            f"Your {days}-day learning journey starts NOW! "
-            f"You'll receive lessons immediately for testing.\n\n"
-            "Get ready for your first lesson! 🚀\n\n"
-            "Reply 'STOP' to unsubscribe at any time."
+            f"Your {days}-day detailed learning journey starts NOW!\n\n"
+            "📚 What you'll get each day:\n"
+            "• Clear learning objectives\n"
+            "• Detailed core concepts\n"
+            "• Hands-on exercises\n"
+            "• YouTube video references\n"
+            "• Additional resources\n"
+            "• Key takeaways\n\n"
+            f"⏰ Lessons will arrive daily at {time_str}\n\n"
+            "Reply STOP to unsubscribe."
         )
         
         if not send_whatsapp(phone, welcome_message):
             logger.error("❌ Failed to send welcome message")
             return False
         
-        # ULTRA INSTANT MODE: Send first lesson immediately, then schedule others with 15-second intervals
-        logger.info(f"⚡ SENDING DAY 1 IMMEDIATELY")
-        
-        # Send Day 1 immediately in a separate thread to avoid blocking
-        def send_day1():
-            time.sleep(2)  # Small delay to ensure welcome message arrives first
-            send_course_lesson(phone, course, 1, days)
-        
-        day1_thread = threading.Thread(target=send_day1)
-        day1_thread.daemon = True
-        day1_thread.start()
-        
-        # Schedule remaining lessons with 15-second intervals
+        # Schedule all lessons including Day 1
         now = datetime.now()
-        for day in range(2, days + 1):
-            # Schedule each subsequent message 15 seconds apart
-            scheduled_time = now + timedelta(seconds=15 * (day - 1))
-            logger.info(f"⏰ Scheduling Day {day} in {15 * (day - 1)} seconds at {scheduled_time}")
-            
-            job_id = f"{phone}_{course}_day{day}_{schedule_id}"
-            
-            scheduler.add_job(
-                send_course_lesson,
-                'date',
-                run_date=scheduled_time,
-                args=[phone, course, day, days],
-                id=job_id,
-                replace_existing=True
-            )
-            logger.info(f"✅ Scheduled Day {day} - Job ID: {job_id}")
+        for day in range(1, days + 1):
+            try:
+                # Convert user's preferred time to 24-hour format
+                time_obj = datetime.strptime(time_str, "%I:%M %p")
+                
+                # Schedule each day at the user's preferred time
+                scheduled_time = now + timedelta(days=day-1)
+                scheduled_time = scheduled_time.replace(
+                    hour=time_obj.hour, 
+                    minute=time_obj.minute, 
+                    second=0, 
+                    microsecond=0
+                )
+                
+                logger.info(f"⏰ Scheduling Day {day} for {scheduled_time}")
+                
+                job_id = f"{phone}_{course}_day{day}_{schedule_id}"
+                
+                scheduler.add_job(
+                    send_course_lesson,
+                    'date',
+                    run_date=scheduled_time,
+                    args=[phone, course, day, days],
+                    id=job_id,
+                    replace_existing=True
+                )
+                logger.info(f"✅ Scheduled Day {day}")
+                
+            except ValueError as e:
+                logger.error(f"❌ Error parsing time {time_str}: {e}")
+                # Fallback to 9:00 AM
+                scheduled_time = now + timedelta(days=day-1)
+                scheduled_time = scheduled_time.replace(hour=9, minute=0, second=0, microsecond=0)
+                
+                job_id = f"{phone}_{course}_day{day}_{schedule_id}"
+                scheduler.add_job(
+                    send_course_lesson,
+                    'date',
+                    run_date=scheduled_time,
+                    args=[phone, course, day, days],
+                    id=job_id,
+                    replace_existing=True
+                )
+                logger.info(f"✅ Scheduled Day {day} with fallback time 9:00 AM")
         
-        # Reset progress for this course (but Day 1 will immediately increment it)
+        # Reset progress for this course
         reset_progress(phone, course)
         
-        logger.info(f"🎯 Successfully scheduled {days} days of {course} for {phone} in ULTRA INSTANT MODE")
+        logger.info(f"🎯 Successfully scheduled {days} days of detailed content")
         return True
         
     except Exception as e:
-        logger.error(f"❌ Failed to schedule course: {str(e)}")
+        logger.error(f"❌ Failed to schedule detailed course: {str(e)}")
         return False
 
-# === Combined HTML Template ===
+# ... (KEEP ALL THE HTML TEMPLATE EXACTLY THE SAME AS BEFORE)
+
+# ... (KEEP ALL THE HTML TEMPLATE EXACTLY THE SAME AS BEFORE, just update the headers)
 FULL_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -354,10 +438,26 @@ FULL_TEMPLATE = '''
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
             border-color: #3b82f6;
         }
+        
+        .test-mode-banner {
+            background: linear-gradient(90deg, #ff6b6b, #ff8e53);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            text-align: center;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body class="bg-gradient-to-br from-primary-50 to-primary-100 min-h-screen">
     <div class="container mx-auto px-4 py-12 max-w-6xl">
+        {% if test_mode %}
+        <div class="test-mode-banner">
+            🚀 TEST MODE: 1 Day = 1 Minute - Lessons will arrive every minute instead of daily
+        </div>
+        {% endif %}
+        
         <!-- Header Section -->
         <header class="text-center mb-16">
             <div class="flex justify-center mb-6">
@@ -373,9 +473,6 @@ FULL_TEMPLATE = '''
             <p class="text-lg md:text-xl text-gray-600 max-w-2xl mx-auto">
                 Your personalized learning journey, tailored to your schedule and goals
             </p>
-            <div class="mt-4 bg-green-100 border border-green-400 text-green-800 px-4 py-3 rounded-lg inline-block">
-                <strong>⚡ ULTRA INSTANT TEST MODE:</strong> Day 1 sends immediately, then every 15 seconds!
-            </div>
         </header>
         
         {% if template == 'course_selection' %}
@@ -647,20 +744,6 @@ FULL_TEMPLATE = '''
                         </div>
                     </div>
                     
-                    <div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-                        <div class="flex items-center">
-                            <div class="flex-shrink-0">
-                                <svg class="h-5 w-5 text-green-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-                                </svg>
-                            </div>
-                            <div class="ml-3">
-                                <h3 class="text-sm font-medium text-green-800">Ultra Instant Test Mode Active</h3>
-                                <p class="text-sm text-green-700 mt-1">Day 1 sends immediately! Day 2 in 15 seconds, Day 3 in 30 seconds. Perfect for testing!</p>
-                            </div>
-                        </div>
-                    </div>
-                    
                     {% if error %}
                     <div class="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-r">
                         <div class="flex">
@@ -700,9 +783,12 @@ FULL_TEMPLATE = '''
                                         <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd" />
                                     </svg>
                                 </div>
-                                <input type="number" name="days" id="days" min="1" max="365" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="3" value="3" required>
+                                <input type="number" name="days" id="days" min="1" max="365" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="30" required>
                             </div>
-                            <p class="mt-1 text-sm text-gray-500">How many days would you like to complete the course in? (3 recommended for testing)</p>
+                            <p class="mt-1 text-sm text-gray-500">How many days would you like to complete the course in?</p>
+                            {% if test_mode %}
+                            <p class="mt-1 text-sm text-orange-600 font-medium">⏰ TEST MODE: Each day = 1 minute for quick testing</p>
+                            {% endif %}
                         </div>
                         
                         <div>
@@ -725,12 +811,12 @@ FULL_TEMPLATE = '''
                                     {% endfor %}
                                 </select>
                             </div>
-                            <p class="mt-1 text-sm text-gray-500">When would you like to receive your daily lessons? (For testing, lessons will arrive every 15 seconds)</p>
+                            <p class="mt-1 text-sm text-gray-500">When would you like to receive your daily lessons?</p>
                         </div>
                         
                         <div class="pt-2">
                             <button type="submit" class="w-full flex justify-center py-4 px-6 border border-transparent rounded-lg shadow-sm text-lg font-medium text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition duration-300 transform hover:-translate-y-1">
-                                Start Instant Test
+                                Schedule My Learning
                                 <svg class="ml-2 -mr-1 w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L12.586 11H5a1 1 0 110-2h7.586l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
                                 </svg>
@@ -783,7 +869,7 @@ FULL_TEMPLATE = '''
                     
                     <h2 class="text-2xl md:text-3xl font-bold text-gray-900 mb-3">Course Scheduled Successfully!</h2>
                     <p class="text-lg text-gray-600 mb-8">
-                        Your <span class="font-semibold text-primary-600">{{ course }}</span> course will begin immediately.
+                        Your <span class="font-semibold text-primary-600">{{ course }}</span> course will begin as scheduled.
                     </p>
                     
                     <!-- Progress Tracker - Moved to top -->
@@ -856,7 +942,7 @@ FULL_TEMPLATE = '''
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Check your WhatsApp - Day 1 should arrive within 2 seconds! Day 2 in 15 seconds, Day 3 in 30 seconds.</span>
+                                <span class="text-gray-700">Check your WhatsApp for the first lesson - it should arrive within 24 hours</span>
                             </li>
                             <li class="flex items-start">
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -868,7 +954,7 @@ FULL_TEMPLATE = '''
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Monitor your progress here - it updates automatically after each lesson!</span>
+                                <span class="text-gray-700">Join our <a href="#" class="text-primary-600 hover:underline">community forum</a> for peer support and additional resources</span>
                             </li>
                         </ul>
                     </div>
@@ -886,15 +972,6 @@ FULL_TEMPLATE = '''
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                             </svg>
                             View Progress
-                        </a>
-                    </div>
-                    
-                    <div class="mt-6">
-                        <a href="/send-now" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition duration-300">
-                            <svg class="w-5 h-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                            </svg>
-                            Send Next Lesson Now
                         </a>
                     </div>
                     
@@ -966,7 +1043,6 @@ FULL_TEMPLATE = '''
 </body>
 </html>
 '''
-
 @app.route('/', methods=['GET', 'POST'])
 def select_course():
     if request.method == "POST":
@@ -1001,8 +1077,8 @@ def schedule_form():
             if not days.isdigit() or int(days) <= 0 or int(days) > 365:
                 raise ValueError("Please enter a valid number of days (1-365)")
             
-            # Schedule the course with ULTRA INSTANT TEST MODE
-            if schedule_course_messages_instant(phone, course, int(days), time):
+            # Schedule the course with DETAILED CONTENT MODE
+            if schedule_course_messages_detailed(phone, course, int(days), time):
                 session['phone'] = phone
                 session['course'] = course
                 session['total_days'] = int(days)
@@ -1053,7 +1129,6 @@ def progress():
     
     completed_days = get_progress(phone, course)
     
-    # Log current progress for debugging
     logger.info(f"📊 Progress check: {phone} - {course} - {completed_days}/{total_days} days")
     
     return render_template_string(
