@@ -11,6 +11,7 @@ from reportlab.lib.pagesizes import landscape, letter
 from reportlab.pdfgen import canvas
 from datetime import datetime, timedelta
 import mysql.connector
+import time
 
 # === CONFIGURATION ===
 TWILIO_ACCOUNT_SID = "AC528ab24ab623cb4e38bcc3d1bddef076"
@@ -32,6 +33,10 @@ scheduler = BackgroundScheduler()
 
 # === GLOBAL PROGRESS STORE (for demo/testing; use a DB for production) ===
 progress_store = {}  # key: (phone, course), value: int (completed days)
+
+# === TESTING CONFIGURATION ===
+TEST_MODE = True  # Set to True to simulate 1 day = 1 minute
+MINUTES_PER_DAY = 1 if TEST_MODE else 1440  # 1 minute per day in test mode
 
 def increment_progress(phone, course):
     key = (phone, course)
@@ -141,10 +146,26 @@ FULL_TEMPLATE = '''
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
             border-color: #3b82f6;
         }
+        
+        .test-mode-banner {
+            background: linear-gradient(90deg, #ff6b6b, #ff8e53);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            text-align: center;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body class="bg-gradient-to-br from-primary-50 to-primary-100 min-h-screen">
     <div class="container mx-auto px-4 py-12 max-w-6xl">
+        {% if test_mode %}
+        <div class="test-mode-banner">
+            🚀 TEST MODE: 1 Day = 1 Minute - Lessons will arrive every minute instead of daily
+        </div>
+        {% endif %}
+        
         <!-- Header Section -->
         <header class="text-center mb-16">
             <div class="flex justify-center mb-6">
@@ -473,6 +494,9 @@ FULL_TEMPLATE = '''
                                 <input type="number" name="days" id="days" min="1" max="365" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="30" required>
                             </div>
                             <p class="mt-1 text-sm text-gray-500">How many days would you like to complete the course in?</p>
+                            {% if test_mode %}
+                            <p class="mt-1 text-sm text-orange-600 font-medium">⏰ TEST MODE: Each day = 1 minute for quick testing</p>
+                            {% endif %}
                         </div>
                         
                         <div>
@@ -804,17 +828,20 @@ def send_whatsapp(to_phone, message):
 
 def scheduled_job(phone, course, part, days):
     try:
+        print(f"🕐 Running scheduled job for {phone} - {course} Day {part}")
         content = generate_daily_content(course, part, days)
         if send_whatsapp(phone, f"{course} - Day {part}\n\n{content}"):
             increment_progress(phone, course)
+            print(f"✅ Successfully completed Day {part} for {phone}")
     except Exception as e:
-        print(f"Failed to send day {part} WhatsApp: {str(e)}")
+        print(f"❌ Failed to send day {part} WhatsApp: {str(e)}")
 
 def remove_existing_jobs(phone, course):
     for job in scheduler.get_jobs():
         if job.id.startswith(f"{phone}_{course}_"):
             try:
                 scheduler.remove_job(job.id)
+                print(f"🗑️ Removed existing job: {job.id}")
             except:
                 pass
 
@@ -838,7 +865,12 @@ def schedule_course(phone, course, days, time_str):
             raise Exception("Failed to send welcome WhatsApp")
             
         for i in range(1, days + 1):
-            scheduled_time = now + timedelta(days=i-1)
+            # In test mode, schedule each lesson 1 minute apart
+            if TEST_MODE:
+                scheduled_time = now + timedelta(minutes=i-1)
+            else:
+                scheduled_time = now + timedelta(days=i-1)
+            
             scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
             
             job_id = f"{phone}_{course}_day{i}"
@@ -858,7 +890,7 @@ def schedule_course(phone, course, days, time_str):
         session['total_days'] = int(days)
         return True
     except Exception as e:
-        print(f"Failed to schedule course: {str(e)}")
+        print(f"❌ Failed to schedule course: {str(e)}")
         return False
 
 @app.route('/', methods=['GET', 'POST'])
@@ -868,7 +900,8 @@ def select_course():
     return render_template_string(
         FULL_TEMPLATE,
         template='course_selection',
-        csrf_token=generate_csrf()
+        csrf_token=generate_csrf(),
+        test_mode=TEST_MODE
     )
 
 @app.route("/schedule", methods=["GET", "POST"])
@@ -901,7 +934,8 @@ def schedule_form():
                 error=error_message,
                 sandbox_code="sea-sun",  # Replace with your actual sandbox code
                 twilio_whatsapp_number="+14155238886",
-                csrf_token=generate_csrf()
+                csrf_token=generate_csrf(),
+                test_mode=TEST_MODE
             )
         except Exception as e:
             error_message = "An error occurred. Please try again."
@@ -912,7 +946,8 @@ def schedule_form():
                 error=error_message,
                 sandbox_code="sea-sun",  # Replace with your actual sandbox code
                 twilio_whatsapp_number="+14155238886",
-                csrf_token=generate_csrf()
+                csrf_token=generate_csrf(),
+                test_mode=TEST_MODE
             )
     return render_template_string(
         FULL_TEMPLATE,
@@ -920,7 +955,8 @@ def schedule_form():
         course=course,
         sandbox_code="sea-sun",  # Replace with your actual sandbox code
         twilio_whatsapp_number="+14155238886",
-        csrf_token=generate_csrf()
+        csrf_token=generate_csrf(),
+        test_mode=TEST_MODE
     )
 
 @app.route("/progress")
@@ -938,7 +974,8 @@ def progress():
         total_days=total_days,
         completed_days=completed_days,
         twilio_whatsapp_number="+14155238886",
-        csrf_token=generate_csrf()
+        csrf_token=generate_csrf(),
+        test_mode=TEST_MODE
     )
 
 @app.route("/course-agent", methods=["GET", "POST"])
@@ -946,7 +983,8 @@ def course_agent():
     return render_template_string(
         FULL_TEMPLATE,
         template='course_selection',
-        csrf_token=generate_csrf()
+        csrf_token=generate_csrf(),
+        test_mode=TEST_MODE
     )
 
 @app.route("/signup", methods=["POST"])
@@ -999,10 +1037,29 @@ def certificate():
 
     return render_template("cert.html", name=name, course=course, date=date)
 
+@app.route("/test-send")
+def test_send():
+    """Test endpoint to manually trigger a WhatsApp message"""
+    phone = session.get('phone')
+    course = session.get('course')
+    if not phone or not course:
+        return "No phone or course in session"
+    
+    try:
+        content = generate_daily_content(course, 1, 1)
+        if send_whatsapp(phone, f"TEST - {course}\n\n{content}"):
+            return f"Test message sent to {phone}"
+        else:
+            return "Failed to send test message"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 if __name__ == "__main__":
     scheduler.start()
     port = int(os.environ.get("PORT", 8000))
+    
+    if TEST_MODE:
+        print("🚀 TEST MODE ACTIVATED: 1 Day = 1 Minute")
+        print("📱 WhatsApp messages will be sent every minute instead of daily")
+    
     app.run(host='0.0.0.0', port=port, debug=False)
-
-
-
