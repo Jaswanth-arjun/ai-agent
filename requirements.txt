@@ -6,3 +6,5 @@ together==1.5.26
 reportlab==4.0.4
 mysql-connector-python==8.1.0
 werkzeug==2.3.7
+gunicorn==21.2.0
+python-dotenv==1.0.0
