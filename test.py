@@ -152,6 +152,64 @@ def send_whatsapp(to_phone, message):
     except Exception as e:
         logger.error(f"❌ Error sending WhatsApp: {str(e)}")
         return False
+def scheduled_job(phone, course, part, days):
+    try:
+        content = generate_daily_content(course, part, days)
+        if send_whatsapp(phone, f"{course} - Day {part}\n\n{content}"):
+            increment_progress(phone, course)
+    except Exception as e:
+        print(f"Failed to send day {part} WhatsApp: {str(e)}")
+
+def remove_existing_jobs(phone, course):
+    for job in scheduler.get_jobs():
+        if job.id.startswith(f"{phone}_{course}_"):
+            try:
+                scheduler.remove_job(job.id)
+            except:
+                pass
+
+def schedule_course(phone, course, days, time_str):
+    try:
+        now = datetime.now()
+        # Convert AM/PM time to 24-hour format for scheduling
+        time_obj = datetime.strptime(time_str, "%I:%M %p")
+        hour = time_obj.hour
+        minute = time_obj.minute
+        
+        remove_existing_jobs(phone, course)
+        
+        welcome_message = (
+            f"Welcome to {course}! 🎓\n\n"
+            "You will receive daily lessons via WhatsApp. Let's start learning!\n\n"
+            "To stop receiving messages, reply 'STOP' at any time."
+        )
+        
+        if not send_whatsapp(phone, welcome_message):
+            raise Exception("Failed to send welcome WhatsApp")
+            
+        for i in range(1, days + 1):
+            scheduled_time = now + timedelta(days=i-1)
+            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
+            
+            job_id = f"{phone}_{course}_day{i}"
+            scheduler.add_job(
+                scheduled_job,
+                'date',
+                run_date=scheduled_time,
+                args=[phone, course, i, days],
+                id=job_id,
+                replace_existing=True
+            )
+            print(f"📅 Scheduled Day {i} WhatsApp at {scheduled_time}")
+            
+        reset_progress(phone, course)
+        session['phone'] = phone
+        session['course'] = course
+        session['total_days'] = int(days)
+        return True
+    except Exception as e:
+        print(f"Failed to schedule course: {str(e)}")
+        return False
 
 def scheduled_course_job(phone, course, part, total_days, schedule_id):
     """Job function to send scheduled course content"""
@@ -1151,4 +1209,5 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=True)
+
 
