@@ -764,7 +764,7 @@ FULL_TEMPLATE = '''
                                 <div class="absolute -bottom-5 left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-8 border-r-8 border-t-8 border-l-transparent border-r-transparent border-t-primary-100"></div>
                             </div>
                             <h3 class="text-lg font-semibold text-gray-800 mb-3">Start Learning</h3>
-                            <p class="text-gray-600">Receive daily bite-sized lessons and track your progress</p>
+                            <p class="text-gray-600">Receive daily bite-sized lessons via WhatsApp and track your progress</p>
                         </div>
                     </div>
                 </div>
@@ -806,16 +806,15 @@ FULL_TEMPLATE = '''
                         <input type="hidden" name="course" value="{{ course }}">
                         
                         <div>
-                            <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                            <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">WhatsApp Number</label>
                             <div class="relative">
                                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                        <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
-                                        <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
-                                    </svg>
+                                    <i class="fab fa-whatsapp text-gray-400"></i>
                                 </div>
-                                <input type="email" name="email" id="email" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="you@example.com" required>
+                                <input type="tel" name="phone" id="phone" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="+1234567890" required>
                             </div>
+                            <p class="mt-1 text-sm text-gray-500">Enter your WhatsApp number with country code (e.g., +1 for US)</p>
+                            <p class="mt-1 text-sm text-primary-600 font-medium">📱 First, join our WhatsApp sandbox by sending "join {{ sandbox_code }}" to {{ twilio_whatsapp_number }}</p>
                         </div>
                         
                         <div>
@@ -869,20 +868,20 @@ FULL_TEMPLATE = '''
         
         <script>
             function validateForm() {
-                const email = document.getElementById('email').value;
+                const phone = document.getElementById('phone').value;
                 const days = document.getElementById('days').value;
                 const time = document.getElementById('time').value;
                 
                 // Basic validation
-                if (!email || !days || !time) {
+                if (!phone || !days || !time) {
                     alert('Please fill in all required fields');
                     return false;
                 }
                 
-                // Email validation
-                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-                if (!emailRegex.test(email)) {
-                    alert('Please enter a valid email address');
+                // Phone validation - basic check for country code
+                const phoneRegex = /^\+[1-9]\d{1,14}$/;
+                if (!phoneRegex.test(phone)) {
+                    alert('Please enter a valid WhatsApp number with country code (e.g., +1234567890)');
                     return false;
                 }
                 
@@ -982,13 +981,13 @@ FULL_TEMPLATE = '''
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Check your inbox for the first lesson - it should arrive within 24 hours</span>
+                                <span class="text-gray-700">Check your WhatsApp for the first lesson - it should arrive within 24 hours</span>
                             </li>
                             <li class="flex items-start">
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Add <span class="font-mono text-primary-600">learning@learnhub.com</span> to your contacts to ensure delivery</span>
+                                <span class="text-gray-700">Save <span class="font-mono text-primary-600">{{ twilio_whatsapp_number }}</span> to your contacts</span>
                             </li>
                             <li class="flex items-start">
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -1084,6 +1083,7 @@ FULL_TEMPLATE = '''
 </html>
 '''
 
+
 @app.route("/course-agent", methods=["GET", "POST"])
 def course_agent():
     return render_template_string(
@@ -1151,3 +1151,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=True)
+
