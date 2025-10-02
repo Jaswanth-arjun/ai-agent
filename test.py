@@ -12,35 +12,123 @@ from reportlab.pdfgen import canvas
 from datetime import datetime, timedelta
 import mysql.connector
 import time
+from dotenv import load_dotenv
+import atexit
+import threading
+
+# Load environment variables
+load_dotenv()
 
 # === CONFIGURATION ===
-TWILIO_ACCOUNT_SID = "AC528ab24ab623cb4e38bcc3d1bddef076"
-TWILIO_AUTH_TOKEN = "76a526d490d111cf6aaff35d22690d27"
-TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"  # Twilio WhatsApp sandbox
-TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "AC528ab24ab623cb4e38bcc3d1bddef076")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "76a526d490d111cf6aaff35d22690d27")
+TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"
+TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff")
+
+# === TESTING CONFIGURATION ===
+TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "true"
+MINUTES_PER_DAY = 1 if TEST_MODE else 1440
+
+print(f"🚀 Initializing LearnHub in {'TEST' if TEST_MODE else 'PRODUCTION'} mode")
 
 # === Setup Together client ===
-together = Together(api_key=TOGETHER_API_KEY)
+try:
+    together = Together(api_key=TOGETHER_API_KEY)
+    print("✅ Together AI client initialized successfully")
+except Exception as e:
+    print(f"❌ Failed to initialize Together AI client: {e}")
+    together = None
 
 # === Setup Twilio client ===
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+try:
+    twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    print("✅ Twilio client initialized successfully")
+except Exception as e:
+    print(f"❌ Failed to initialize Twilio client: {e}")
+    twilio_client = None
 
 # === Flask & Scheduler Setup ===
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 csrf = CSRFProtect(app)
-scheduler = BackgroundScheduler()
 
-# === GLOBAL PROGRESS STORE (for demo/testing; use a DB for production) ===
-progress_store = {}  # key: (phone, course), value: int (completed days)
+# === GLOBAL STORES ===
+progress_store = {}
+active_courses = {}  # Store active course schedules
+lesson_queue = []    # Queue for immediate lesson delivery
 
-# === TESTING CONFIGURATION ===
-TEST_MODE = True  # Set to True to simulate 1 day = 1 minute
-MINUTES_PER_DAY = 1 if TEST_MODE else 1440  # 1 minute per day in test mode
+# === SIMPLE SCHEDULER ===
+class SimpleScheduler:
+    def __init__(self):
+        self.jobs = {}
+        self.running = True
+        self.thread = threading.Thread(target=self._run_scheduler, daemon=True)
+        self.thread.start()
+        print("✅ Simple scheduler started")
+
+    def _run_scheduler(self):
+        while self.running:
+            now = datetime.now()
+            jobs_to_run = []
+            
+            # Check which jobs need to run
+            for job_id, job_data in list(self.jobs.items()):
+                if job_data['run_time'] <= now and not job_data['executed']:
+                    jobs_to_run.append((job_id, job_data))
+            
+            # Execute jobs
+            for job_id, job_data in jobs_to_run:
+                try:
+                    print(f"🕐 Executing job: {job_id}")
+                    job_data['function'](*job_data['args'])
+                    job_data['executed'] = True
+                    
+                    # Remove completed one-time jobs
+                    if job_data.get('one_time', True):
+                        del self.jobs[job_id]
+                        print(f"✅ Completed and removed job: {job_id}")
+                    else:
+                        # Reschedule recurring jobs
+                        if TEST_MODE:
+                            job_data['run_time'] = now + timedelta(minutes=1)
+                        else:
+                            job_data['run_time'] = now + timedelta(days=1)
+                        job_data['executed'] = False
+                        print(f"🔄 Rescheduled job: {job_id} for {job_data['run_time']}")
+                        
+                except Exception as e:
+                    print(f"❌ Error executing job {job_id}: {e}")
+                    # Keep the job for retry
+                    job_data['executed'] = False
+            
+            time.sleep(10)  # Check every 10 seconds
+
+    def add_job(self, run_time, function, args, job_id, one_time=True):
+        self.jobs[job_id] = {
+            'run_time': run_time,
+            'function': function,
+            'args': args,
+            'executed': False,
+            'one_time': one_time
+        }
+        print(f"📅 Added job {job_id} for {run_time}")
+
+    def remove_jobs(self, prefix):
+        jobs_to_remove = [job_id for job_id in self.jobs.keys() if job_id.startswith(prefix)]
+        for job_id in jobs_to_remove:
+            del self.jobs[job_id]
+            print(f"🗑️ Removed job: {job_id}")
+
+    def get_job_count(self):
+        return len(self.jobs)
+
+# Initialize scheduler
+scheduler = SimpleScheduler()
 
 def increment_progress(phone, course):
     key = (phone, course)
     progress_store[key] = progress_store.get(key, 0) + 1
+    print(f"📈 Progress updated: {phone} - {course} - Day {progress_store[key]}")
 
 def get_progress(phone, course):
     key = (phone, course)
@@ -48,6 +136,7 @@ def get_progress(phone, course):
 
 def reset_progress(phone, course):
     progress_store[(phone, course)] = 0
+    print(f"🔄 Progress reset: {phone} - {course}")
 
 # === Combined HTML Template ===
 FULL_TEMPLATE = '''
@@ -753,146 +842,236 @@ FULL_TEMPLATE = '''
 '''
 
 def generate_daily_content(course, part, days):
+    """Generate course content with fallback"""
+    if together is None:
+        # Fallback content
+        fallback_content = f"""
+📚 {course} - Day {part}
+
+🎯 **Lesson Overview**
+This is day {part} of your {days}-day {course} course.
+
+📖 **Key Concepts:**
+- Fundamental principles of {course}
+- Practical applications
+- Real-world examples
+
+💡 **Today's Exercise:**
+Try building a simple project related to {course}.
+
+🔗 **Resources:**
+- Official documentation
+- Community tutorials
+- Practice exercises
+
+📌 **Tip:** Consistency is key! Practice daily to master {course}.
+
+🌟 **You're doing great! Keep learning!**
+"""
+        return fallback_content
+
     if days == 1:
-        prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in **1 day**, so provide the **entire course content in a single comprehensive lesson**.
-
-Include all of the following in your response:
-
-1. 📘 **Course Title**
-2. 🧠 **Complete Explanation with Real-World Examples**
-   - Cover all major concepts a beginner should know.
-   - Include relevant examples and clear breakdowns.
-3. ✍️ **Practical Exercises**
-   - Add 3–5 hands-on tasks or projects.
-4. 📌 **Key Takeaways**
-   - Summarize essential points to remember.
-5. 🔗 **Curated Resource Links**
-   - Provide 3–5 helpful links to tutorials, videos, or documentation.
-6. 📝 **Format Everything in Markdown**
-   - Use proper headers (`#`), bullet points, and code blocks (```).
-
-Make sure the course is complete and self-contained.
-"""
+        prompt = f"Create a comprehensive 1-day course about {course}. Include theory, examples, exercises, and resources."
     else:
-        prompt = f"""
-You are an expert course creator. The topic is: '{course}'. The learner wants to complete this course in {days} days. Divide the topic into {days} structured lessons. Now generate **Lesson {part} of {days}**.
+        prompt = f"Create lesson {part} of {days} for {course}. Focus on one specific topic with examples and exercises."
 
-Strictly generate only **Lesson {part}**, not others.
-
-Include in Lesson {part}:
-
-1. 📘 **Lesson Title**
-2. 🧠 **Focused Explanation with Real Examples**
-   - Teach one part of the topic clearly.
-3. ✍️ **2–3 Practical Exercises**
-4. 📌 **3–5 Key Takeaways**
-5. 🔗 **2–3 Curated Resource Links**
-6. 📝 **Markdown Formatting**
-   - Use headers, bullets, and code blocks as needed.
-
-🛑 Do NOT include other parts or summaries. Focus only on Lesson {part}.
-"""
-
-    response = together.chat.completions.create(
-        model="meta-llama/Llama-3-70b-chat-hf",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=1500
-    )
-    return response.choices[0].message.content.strip()
+    try:
+        response = together.chat.completions.create(
+            model="meta-llama/Llama-3-70b-chat-hf",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=1200
+        )
+        content = response.choices[0].message.content.strip()
+        print(f"✅ Generated content for {course} Day {part}")
+        return content
+    except Exception as e:
+        print(f"❌ Error generating content: {e}")
+        return f"📚 {course} - Day {part}\n\nToday's lesson focuses on key concepts and practical exercises. Keep up the great work! 🚀"
 
 def send_whatsapp(to_phone, message):
+    """Send WhatsApp message with improved error handling"""
+    if twilio_client is None:
+        print(f"📱 [SIMULATED] WhatsApp to {to_phone}: {message[:100]}...")
+        return True
+        
     try:
         if not to_phone or not to_phone.startswith('+'):
             print(f"❌ Invalid phone number: {to_phone}")
             return False
         
-        # Format phone number for WhatsApp
         whatsapp_to = f"whatsapp:{to_phone}"
         
-        # Truncate message if needed (WhatsApp has higher limits than SMS)
         if len(message) > 4000:
             message = message[:3997] + "..."
         
-        twilio_client.messages.create(
+        message_obj = twilio_client.messages.create(
             body=message,
             from_=TWILIO_WHATSAPP_NUMBER,
             to=whatsapp_to
         )
-        print(f"📤 Successfully sent WhatsApp to: {to_phone}")
+        print(f"✅ WhatsApp sent to {to_phone} - SID: {message_obj.sid}")
         return True
     except Exception as e:
-        print(f"❌ Error sending WhatsApp: {str(e)}")
+        print(f"❌ Error sending WhatsApp to {to_phone}: {str(e)}")
         return False
 
-def scheduled_job(phone, course, part, days):
+def send_lesson_job(phone, course, part, days):
+    """Job function to send a lesson"""
+    print(f"🎯 SENDING LESSON: {course} Day {part} to {phone}")
+    
     try:
-        print(f"🕐 Running scheduled job for {phone} - {course} Day {part}")
         content = generate_daily_content(course, part, days)
-        if send_whatsapp(phone, f"{course} - Day {part}\n\n{content}"):
+        message = f"🎓 {course} - Day {part}/{days}\n\n{content}\n\n---\n📚 LearnHub - Keep learning! 🚀"
+        
+        if send_whatsapp(phone, message):
             increment_progress(phone, course)
-            print(f"✅ Successfully completed Day {part} for {phone}")
+            print(f"✅ SUCCESS: Sent {course} Day {part} to {phone}")
+            
+            # Schedule next lesson if there are more
+            if part < days:
+                next_part = part + 1
+                if TEST_MODE:
+                    next_run = datetime.now() + timedelta(minutes=1)
+                else:
+                    next_run = datetime.now() + timedelta(days=1)
+                
+                job_id = f"{phone}_{course}_day{next_part}"
+                scheduler.add_job(
+                    next_run,
+                    send_lesson_job,
+                    [phone, course, next_part, days],
+                    job_id
+                )
+                print(f"📅 Scheduled next lesson: Day {next_part} at {next_run}")
+        else:
+            print(f"❌ FAILED: Could not send {course} Day {part} to {phone}")
+            # Retry in 1 minute
+            retry_time = datetime.now() + timedelta(minutes=1)
+            job_id = f"{phone}_{course}_day{part}_retry"
+            scheduler.add_job(
+                retry_time,
+                send_lesson_job,
+                [phone, course, part, days],
+                job_id
+            )
+            print(f"🔄 Scheduled retry for Day {part} at {retry_time}")
+            
     except Exception as e:
-        print(f"❌ Failed to send day {part} WhatsApp: {str(e)}")
+        print(f"❌ ERROR in send_lesson_job: {e}")
+        # Final retry after 2 minutes
+        retry_time = datetime.now() + timedelta(minutes=2)
+        job_id = f"{phone}_{course}_day{part}_final_retry"
+        scheduler.add_job(
+            retry_time,
+            send_lesson_job,
+            [phone, course, part, days],
+            job_id
+        )
 
-def remove_existing_jobs(phone, course):
-    for job in scheduler.get_jobs():
-        if job.id.startswith(f"{phone}_{course}_"):
-            try:
-                scheduler.remove_job(job.id)
-                print(f"🗑️ Removed existing job: {job.id}")
-            except:
-                pass
-
-def schedule_course(phone, course, days, time_str):
+def schedule_course_lessons(phone, course, days, time_str):
+    """Schedule all lessons for a course"""
+    print(f"📅 Scheduling {days} lessons for {phone} - {course}")
+    
     try:
+        # Remove any existing jobs for this phone/course
+        scheduler.remove_jobs(f"{phone}_{course}_")
+        
+        # Send welcome message
+        welcome_msg = f"""
+🎉 Welcome to your {course} course!
+
+📚 Course: {course}
+⏰ Duration: {days} {'minutes' if TEST_MODE else 'days'}
+📅 Lessons: {days} lessons
+🕐 Schedule: {'Every minute' if TEST_MODE else 'Daily at ' + time_str}
+
+Your first lesson will arrive shortly! Get ready to learn 🚀
+
+Reply STOP to unsubscribe at any time.
+"""
+        send_whatsapp(phone, welcome_msg)
+        print(f"✅ Welcome message sent to {phone}")
+        
+        # Calculate first lesson time
         now = datetime.now()
-        # Convert AM/PM time to 24-hour format for scheduling
-        time_obj = datetime.strptime(time_str, "%I:%M %p")
-        hour = time_obj.hour
-        minute = time_obj.minute
+        if TEST_MODE:
+            # Start first lesson in 30 seconds
+            first_lesson_time = now + timedelta(seconds=30)
+        else:
+            # Parse the time and schedule for today/tomorrow
+            time_obj = datetime.strptime(time_str, "%I:%M %p")
+            first_lesson_time = now.replace(hour=time_obj.hour, minute=time_obj.minute, second=0)
+            if first_lesson_time <= now:
+                first_lesson_time += timedelta(days=1)
         
-        remove_existing_jobs(phone, course)
-        
-        welcome_message = (
-            f"Welcome to {course}! 🎓\n\n"
-            "You will receive daily lessons via WhatsApp. Let's start learning!\n\n"
-            "To stop receiving messages, reply 'STOP' at any time."
+        # Schedule first lesson
+        job_id = f"{phone}_{course}_day1"
+        scheduler.add_job(
+            first_lesson_time,
+            send_lesson_job,
+            [phone, course, 1, days],
+            job_id
         )
         
-        if not send_whatsapp(phone, welcome_message):
-            raise Exception("Failed to send welcome WhatsApp")
-            
-        for i in range(1, days + 1):
-            # In test mode, schedule each lesson 1 minute apart
-            if TEST_MODE:
-                scheduled_time = now + timedelta(minutes=i-1)
-            else:
-                scheduled_time = now + timedelta(days=i-1)
-            
-            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
-            
-            job_id = f"{phone}_{course}_day{i}"
-            scheduler.add_job(
-                scheduled_job,
-                'date',
-                run_date=scheduled_time,
-                args=[phone, course, i, days],
-                id=job_id,
-                replace_existing=True
-            )
-            print(f"📅 Scheduled Day {i} WhatsApp at {scheduled_time}")
-            
+        print(f"✅ Scheduled first lesson for {first_lesson_time}")
+        print(f"📊 Active jobs: {scheduler.get_job_count()}")
+        
+        # Store course info
+        active_courses[(phone, course)] = {
+            'days': days,
+            'started': now,
+            'progress': 0
+        }
+        
         reset_progress(phone, course)
         session['phone'] = phone
         session['course'] = course
-        session['total_days'] = int(days)
+        session['total_days'] = days
+        session['scheduled_time'] = first_lesson_time.isoformat()
+        
         return True
+        
     except Exception as e:
-        print(f"❌ Failed to schedule course: {str(e)}")
+        print(f"❌ Error scheduling course: {e}")
         return False
 
+def send_immediate_lessons(phone, course, days):
+    """Send multiple lessons immediately for testing"""
+    print(f"🚀 Sending {days} lessons immediately to {phone}")
+    
+    welcome_msg = f"""
+🎉 Welcome to your {course} course! (IMMEDIATE MODE)
+
+📚 Course: {course}
+⏰ Duration: {days} lessons
+🚀 Mode: All lessons sent immediately for testing
+
+Get ready to learn! 🚀
+"""
+    send_whatsapp(phone, welcome_msg)
+    
+    # Send lessons with small delays
+    for day in range(1, days + 1):
+        lesson_time = datetime.now() + timedelta(seconds=day * 10)  # 10 seconds between lessons
+        job_id = f"{phone}_{course}_immediate_day{day}"
+        scheduler.add_job(
+            lesson_time,
+            send_lesson_job,
+            [phone, course, day, days],
+            job_id
+        )
+        print(f"📅 Scheduled immediate lesson {day} for {lesson_time}")
+    
+    reset_progress(phone, course)
+    session['phone'] = phone
+    session['course'] = course
+    session['total_days'] = days
+    session['immediate_mode'] = True
+    
+    return True
+
+# Flask Routes
 @app.route('/', methods=['GET', 'POST'])
 def select_course():
     if request.method == "POST":
@@ -909,22 +1088,34 @@ def schedule_form():
     course = request.args.get("course") or request.form.get("course")
     if not course:
         return redirect(url_for("select_course"))
+    
     if request.method == "POST":
         try:
             phone = request.form.get("phone", "").strip()
             days = request.form.get("days", "").strip()
             time = request.form.get("time", "").strip()
+            
             if not all([phone, days, time]):
                 raise ValueError("All fields are required")
             if not phone.startswith('+'):
                 raise ValueError("Please enter a valid WhatsApp number with country code (e.g., +1 for US)")
-            if not days.isdigit() or int(days) <= 0:
-                raise ValueError("Please enter a valid number of days")
-            schedule_course(phone, course, int(days), time)
-            session['phone'] = phone
-            session['course'] = course
-            session['total_days'] = int(days)
-            return redirect(url_for('progress'))
+            if not days.isdigit() or int(days) <= 0 or int(days) > 365:
+                raise ValueError("Please enter a valid number of days (1-365)")
+            
+            days_int = int(days)
+            
+            # For testing, use immediate mode for quick results
+            if TEST_MODE and days_int <= 5:  # Only for short courses in test mode
+                if send_immediate_lessons(phone, course, days_int):
+                    return redirect(url_for('progress'))
+                else:
+                    raise Exception("Failed to schedule immediate lessons")
+            else:
+                if schedule_course_lessons(phone, course, days_int, time):
+                    return redirect(url_for('progress'))
+                else:
+                    raise Exception("Failed to schedule course")
+                
         except ValueError as e:
             error_message = str(e)
             return render_template_string(
@@ -932,28 +1123,29 @@ def schedule_form():
                 template='user_form',
                 course=course,
                 error=error_message,
-                sandbox_code="sea-sun",  # Replace with your actual sandbox code
+                sandbox_code="sea-sun",
                 twilio_whatsapp_number="+14155238886",
                 csrf_token=generate_csrf(),
                 test_mode=TEST_MODE
             )
         except Exception as e:
-            error_message = "An error occurred. Please try again."
+            error_message = f"An error occurred: {str(e)}"
             return render_template_string(
                 FULL_TEMPLATE,
                 template='user_form',
                 course=course,
                 error=error_message,
-                sandbox_code="sea-sun",  # Replace with your actual sandbox code
+                sandbox_code="sea-sun",
                 twilio_whatsapp_number="+14155238886",
                 csrf_token=generate_csrf(),
                 test_mode=TEST_MODE
             )
+    
     return render_template_string(
         FULL_TEMPLATE,
         template='user_form',
         course=course,
-        sandbox_code="sea-sun",  # Replace with your actual sandbox code
+        sandbox_code="sea-sun",
         twilio_whatsapp_number="+14155238886",
         csrf_token=generate_csrf(),
         test_mode=TEST_MODE
@@ -964,9 +1156,16 @@ def progress():
     phone = session.get('phone')
     course = session.get('course')
     total_days = session.get('total_days', 0)
+    
     if not phone or not course or not total_days:
         return redirect(url_for('select_course'))
+    
     completed_days = get_progress(phone, course)
+    
+    # Get scheduling info
+    scheduled_time = session.get('scheduled_time')
+    immediate_mode = session.get('immediate_mode', False)
+    
     return render_template_string(
         FULL_TEMPLATE,
         template='confirm',
@@ -975,10 +1174,62 @@ def progress():
         completed_days=completed_days,
         twilio_whatsapp_number="+14155238886",
         csrf_token=generate_csrf(),
-        test_mode=TEST_MODE
+        test_mode=TEST_MODE,
+        scheduled_time=scheduled_time,
+        immediate_mode=immediate_mode
     )
 
-@app.route("/course-agent", methods=["GET", "POST"])
+@app.route("/send-now")
+def send_now():
+    """Manually trigger lesson sending"""
+    phone = session.get('phone')
+    course = session.get('course')
+    total_days = session.get('total_days', 1)
+    current_progress = get_progress(phone, course)
+    
+    if not phone or not course:
+        return "No active course found"
+    
+    next_lesson = current_progress + 1
+    if next_lesson <= total_days:
+        send_lesson_job(phone, course, next_lesson, total_days)
+        return f"Lesson {next_lesson} sent to {phone}"
+    else:
+        return "All lessons completed!"
+
+@app.route("/debug")
+def debug():
+    """Debug endpoint to check scheduler status"""
+    status = {
+        "test_mode": TEST_MODE,
+        "active_jobs": scheduler.get_job_count(),
+        "progress_store": progress_store,
+        "active_courses": active_courses,
+        "twilio_available": twilio_client is not None,
+        "together_available": together is not None
+    }
+    return jsonify(status)
+
+@app.route("/force-send")
+def force_send():
+    """Force send all remaining lessons"""
+    phone = session.get('phone')
+    course = session.get('course')
+    total_days = session.get('total_days', 1)
+    
+    if not phone or not course:
+        return "No active course"
+    
+    current = get_progress(phone, course)
+    remaining = total_days - current
+    
+    for i in range(1, remaining + 1):
+        lesson_num = current + i
+        send_lesson_job(phone, course, lesson_num, total_days)
+    
+    return f"Force sent {remaining} lessons to {phone}"
+    @app.route("/course-agent", methods=["GET", "POST"])
+    
 def course_agent():
     return render_template_string(
         FULL_TEMPLATE,
@@ -1037,6 +1288,8 @@ def certificate():
 
     return render_template("cert.html", name=name, course=course, date=date)
 
+
+# ... (other routes remain the same)
 @app.route("/test-send")
 def test_send():
     """Test endpoint to manually trigger a WhatsApp message"""
@@ -1055,11 +1308,13 @@ def test_send():
         return f"Error: {str(e)}"
 
 if __name__ == "__main__":
-    scheduler.start()
     port = int(os.environ.get("PORT", 8000))
     
-    if TEST_MODE:
-        print("🚀 TEST MODE ACTIVATED: 1 Day = 1 Minute")
-        print("📱 WhatsApp messages will be sent every minute instead of daily")
+    print("\n" + "="*50)
+    print("🚀 LearnHub Server Starting...")
+    print(f"📱 Mode: {'TEST (1 min = 1 day)' if TEST_MODE else 'PRODUCTION'}")
+    print(f"🌐 Port: {port}")
+    print(f"✅ Scheduler: Running ({scheduler.get_job_count()} jobs)")
+    print("="*50 + "\n")
     
     app.run(host='0.0.0.0', port=port, debug=False)
