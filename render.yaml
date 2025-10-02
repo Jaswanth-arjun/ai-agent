@@ -1,10 +1,7 @@
 services:
   - type: web
-    name: learnhub
+    name: your-app-name
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn test:app
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.10.0
+    startCommand: python test.py
