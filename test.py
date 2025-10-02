@@ -979,10 +979,10 @@ def certificate():
 
     try:
         conn = mysql.connector.connect(
-            host="sql104.infinityfree.com",
-            user="if0_40043007",
-            password="FQM4N2z8L7ai9",
-            database="if0_40043007_db"
+            host="profound-jade-orca-vpmg5-mysql.profound-jade-orca-vpmg5.svc.cluster.local",
+            user="mink",
+            password="wK2+fH1_wU4=pO4-zJ0_",
+            database="profound-jade-orca"
         )
 
         cur = conn.cursor()
@@ -1002,3 +1002,4 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+
