@@ -1001,6 +1001,8 @@ def certificate():
 
 if __name__ == "__main__":
     scheduler.start()
-    app.run(debug=False, host='0.0.0.0', port=8000, use_reloader=False)
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
 
 
