@@ -152,64 +152,6 @@ def send_whatsapp(to_phone, message):
     except Exception as e:
         logger.error(f"❌ Error sending WhatsApp: {str(e)}")
         return False
-def scheduled_job(phone, course, part, days):
-    try:
-        content = generate_daily_content(course, part, days)
-        if send_whatsapp(phone, f"{course} - Day {part}\n\n{content}"):
-            increment_progress(phone, course)
-    except Exception as e:
-        print(f"Failed to send day {part} WhatsApp: {str(e)}")
-
-def remove_existing_jobs(phone, course):
-    for job in scheduler.get_jobs():
-        if job.id.startswith(f"{phone}_{course}_"):
-            try:
-                scheduler.remove_job(job.id)
-            except:
-                pass
-
-def schedule_course(phone, course, days, time_str):
-    try:
-        now = datetime.now()
-        # Convert AM/PM time to 24-hour format for scheduling
-        time_obj = datetime.strptime(time_str, "%I:%M %p")
-        hour = time_obj.hour
-        minute = time_obj.minute
-        
-        remove_existing_jobs(phone, course)
-        
-        welcome_message = (
-            f"Welcome to {course}! 🎓\n\n"
-            "You will receive daily lessons via WhatsApp. Let's start learning!\n\n"
-            "To stop receiving messages, reply 'STOP' at any time."
-        )
-        
-        if not send_whatsapp(phone, welcome_message):
-            raise Exception("Failed to send welcome WhatsApp")
-            
-        for i in range(1, days + 1):
-            scheduled_time = now + timedelta(days=i-1)
-            scheduled_time = scheduled_time.replace(hour=hour, minute=minute, second=0)
-            
-            job_id = f"{phone}_{course}_day{i}"
-            scheduler.add_job(
-                scheduled_job,
-                'date',
-                run_date=scheduled_time,
-                args=[phone, course, i, days],
-                id=job_id,
-                replace_existing=True
-            )
-            print(f"📅 Scheduled Day {i} WhatsApp at {scheduled_time}")
-            
-        reset_progress(phone, course)
-        session['phone'] = phone
-        session['course'] = course
-        session['total_days'] = int(days)
-        return True
-    except Exception as e:
-        print(f"Failed to schedule course: {str(e)}")
-        return False
 
 def scheduled_course_job(phone, course, part, total_days, schedule_id):
     """Job function to send scheduled course content"""
@@ -246,7 +188,7 @@ def remove_existing_jobs(phone, course):
         logger.error(f"❌ Error removing existing jobs: {str(e)}")
         return 0
 
-def schedule_course_messages(phone, course, days, time_str, test_mode=False):
+def schedule_course_messages(phone, course, days, time_str):
     """Schedule all course messages"""
     try:
         logger.info(f"📅 Scheduling {course} for {phone} over {days} days")
@@ -262,7 +204,7 @@ def schedule_course_messages(phone, course, days, time_str, test_mode=False):
             'schedule_id': schedule_id,
             'total_days': days,
             'start_time': datetime.now(),
-            'test_mode': test_mode
+            'test_mode': True  # Always enable test mode for now
         }
         
         # Send welcome message
@@ -278,19 +220,12 @@ def schedule_course_messages(phone, course, days, time_str, test_mode=False):
             logger.error("❌ Failed to send welcome message")
             return False
         
-        # Schedule all course messages
+        # Schedule all course messages - TEST MODE: 1 minute = 1 day
         now = datetime.now()
         for day in range(1, days + 1):
-            if test_mode:
-                # TEST MODE: Schedule each minute instead of each day
-                scheduled_time = now + timedelta(minutes=day)
-                logger.info(f"🧪 TEST MODE: Scheduling Day {day} in {day} minute(s)")
-            else:
-                # PRODUCTION: Schedule each day at specified time
-                time_obj = datetime.strptime(time_str, "%I:%M %p")
-                scheduled_time = now + timedelta(days=day-1)
-                scheduled_time = scheduled_time.replace(hour=time_obj.hour, minute=time_obj.minute, second=0)
-                logger.info(f"📅 PRODUCTION: Scheduling Day {day} for {scheduled_time}")
+            # TEST MODE: Schedule each minute instead of each day
+            scheduled_time = now + timedelta(minutes=day)
+            logger.info(f"🧪 TEST MODE: Scheduling Day {day} in {day} minute(s) at {scheduled_time}")
             
             job_id = f"{phone}_{course}_day{day}_{schedule_id}"
             
@@ -307,156 +242,13 @@ def schedule_course_messages(phone, course, days, time_str, test_mode=False):
         # Reset progress for this course
         reset_progress(phone, course)
         
-        logger.info(f"🎯 Successfully scheduled {days} days of {course} for {phone}")
+        logger.info(f"🎯 Successfully scheduled {days} days of {course} for {phone} in TEST MODE")
         return True
         
     except Exception as e:
         logger.error(f"❌ Failed to schedule course: {str(e)}")
         return False
 
-# === FLASK ROUTES ===
-
-@app.route('/', methods=['GET', 'POST'])
-def select_course():
-    if request.method == "POST":
-        course = request.form.get("course")
-        if course:
-            return redirect(url_for("schedule_form", course=course))
-    return render_template_string(
-        FULL_TEMPLATE,
-        template='course_selection',
-        csrf_token=generate_csrf()
-    )
-
-@app.route("/schedule", methods=["GET", "POST"])
-def schedule_form():
-    course = request.args.get("course") or request.form.get("course")
-    if not course:
-        return redirect(url_for("select_course"))
-    
-    if request.method == "POST":
-        try:
-            phone = request.form.get("phone", "").strip()
-            days = request.form.get("days", "").strip()
-            time = request.form.get("time", "").strip()
-            
-            # Validation
-            if not all([phone, days, time]):
-                raise ValueError("All fields are required")
-            
-            if not phone.startswith('+'):
-                raise ValueError("Please enter a valid WhatsApp number with country code (e.g., +1 for US)")
-            
-            if not days.isdigit() or int(days) <= 0 or int(days) > 365:
-                raise ValueError("Please enter a valid number of days (1-365)")
-            
-            # TEST MODE: Use 1 minute = 1 day for testing
-            test_mode = True
-            logger.info("🧪 TEST MODE ACTIVATED: 1 minute = 1 day")
-            
-            # Schedule the course
-            if schedule_course_messages(phone, course, int(days), time, test_mode):
-                session['phone'] = phone
-                session['course'] = course
-                session['total_days'] = int(days)
-                session['test_mode'] = test_mode
-                return redirect(url_for('progress'))
-            else:
-                raise Exception("Failed to schedule course messages")
-                
-        except ValueError as e:
-            error_message = str(e)
-            return render_template_string(
-                FULL_TEMPLATE,
-                template='user_form',
-                course=course,
-                error=error_message,
-                sandbox_code="sea-sun",
-                twilio_whatsapp_number="+14155238886",
-                csrf_token=generate_csrf()
-            )
-        except Exception as e:
-            error_message = f"An error occurred: {str(e)}"
-            return render_template_string(
-                FULL_TEMPLATE,
-                template='user_form',
-                course=course,
-                error=error_message,
-                sandbox_code="sea-sun",
-                twilio_whatsapp_number="+14155238886",
-                csrf_token=generate_csrf()
-            )
-    
-    return render_template_string(
-        FULL_TEMPLATE,
-        template='user_form',
-        course=course,
-        sandbox_code="sea-sun",
-        twilio_whatsapp_number="+14155238886",
-        csrf_token=generate_csrf()
-    )
-
-@app.route("/progress")
-def progress():
-    phone = session.get('phone')
-    course = session.get('course')
-    total_days = session.get('total_days', 0)
-    
-    if not phone or not course or not total_days:
-        return redirect(url_for('select_course'))
-    
-    completed_days = get_progress(phone, course)
-    
-    # Log current progress for debugging
-    logger.info(f"📊 Progress check: {phone} - {course} - {completed_days}/{total_days} days")
-    
-    return render_template_string(
-        FULL_TEMPLATE,
-        template='confirm',
-        course=course,
-        total_days=total_days,
-        completed_days=completed_days,
-        twilio_whatsapp_number="+14155238886",
-        csrf_token=generate_csrf()
-    )
-
-@app.route("/debug-schedules")
-def debug_schedules():
-    """Debug endpoint to see scheduled jobs"""
-    jobs = []
-    for job in scheduler.get_jobs():
-        jobs.append({
-            'id': job.id,
-            'next_run': job.next_run_time,
-            'args': job.args
-        })
-    
-    return jsonify({
-        'total_jobs': len(jobs),
-        'jobs': jobs,
-        'progress_store': progress_store,
-        'user_schedules': user_schedules
-    })
-
-@app.route("/test-send-now")
-def test_send_now():
-    """Test endpoint to send a message immediately"""
-    phone = session.get('phone')
-    course = session.get('course')
-    
-    if not phone or not course:
-        return "No phone or course in session"
-    
-    try:
-        content = generate_daily_content(course, 1, 1)
-        message = f"🧪 **TEST MESSAGE**\n\n{content}"
-        success = send_whatsapp(phone, message)
-        return f"Test message {'sent' if success else 'failed'}"
-    except Exception as e:
-        return f"Error: {str(e)}"
-
-# ... (Keep all your existing HTML template and other routes the same)
-# The FULL_TEMPLATE variable remains exactly as you had it
 # === Combined HTML Template ===
 FULL_TEMPLATE = '''
 <!DOCTYPE html>
@@ -573,6 +365,9 @@ FULL_TEMPLATE = '''
             <p class="text-lg md:text-xl text-gray-600 max-w-2xl mx-auto">
                 Your personalized learning journey, tailored to your schedule and goals
             </p>
+            <div class="mt-4 bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg inline-block">
+                <strong>🧪 TEST MODE:</strong> 1 minute = 1 day for testing
+            </div>
         </header>
         
         {% if template == 'course_selection' %}
@@ -844,6 +639,20 @@ FULL_TEMPLATE = '''
                         </div>
                     </div>
                     
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0">
+                                <svg class="h-5 w-5 text-yellow-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                                </svg>
+                            </div>
+                            <div class="ml-3">
+                                <h3 class="text-sm font-medium text-yellow-800">Test Mode Active</h3>
+                                <p class="text-sm text-yellow-700 mt-1">For testing: 1 minute = 1 day. Lessons will arrive every minute instead of daily.</p>
+                            </div>
+                        </div>
+                    </div>
+                    
                     {% if error %}
                     <div class="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-r">
                         <div class="flex">
@@ -1039,7 +848,7 @@ FULL_TEMPLATE = '''
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Check your WhatsApp for the first lesson - it should arrive within 24 hours</span>
+                                <span class="text-gray-700">Check your WhatsApp for the first lesson - it should arrive within 1 minute (TEST MODE)</span>
                             </li>
                             <li class="flex items-start">
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -1141,6 +950,139 @@ FULL_TEMPLATE = '''
 </html>
 '''
 
+@app.route('/', methods=['GET', 'POST'])
+def select_course():
+    if request.method == "POST":
+        course = request.form.get("course")
+        if course:
+            return redirect(url_for("schedule_form", course=course))
+    return render_template_string(
+        FULL_TEMPLATE,
+        template='course_selection',
+        csrf_token=generate_csrf()
+    )
+
+@app.route("/schedule", methods=["GET", "POST"])
+def schedule_form():
+    course = request.args.get("course") or request.form.get("course")
+    if not course:
+        return redirect(url_for("select_course"))
+    
+    if request.method == "POST":
+        try:
+            phone = request.form.get("phone", "").strip()
+            days = request.form.get("days", "").strip()
+            time = request.form.get("time", "").strip()
+            
+            # Validation
+            if not all([phone, days, time]):
+                raise ValueError("All fields are required")
+            
+            if not phone.startswith('+'):
+                raise ValueError("Please enter a valid WhatsApp number with country code (e.g., +1 for US)")
+            
+            if not days.isdigit() or int(days) <= 0 or int(days) > 365:
+                raise ValueError("Please enter a valid number of days (1-365)")
+            
+            # Schedule the course with TEST MODE (1 minute = 1 day)
+            if schedule_course_messages(phone, course, int(days), time):
+                session['phone'] = phone
+                session['course'] = course
+                session['total_days'] = int(days)
+                return redirect(url_for('progress'))
+            else:
+                raise Exception("Failed to schedule course messages")
+                
+        except ValueError as e:
+            error_message = str(e)
+            return render_template_string(
+                FULL_TEMPLATE,
+                template='user_form',
+                course=course,
+                error=error_message,
+                sandbox_code="sea-sun",
+                twilio_whatsapp_number="+14155238886",
+                csrf_token=generate_csrf()
+            )
+        except Exception as e:
+            error_message = f"An error occurred: {str(e)}"
+            return render_template_string(
+                FULL_TEMPLATE,
+                template='user_form',
+                course=course,
+                error=error_message,
+                sandbox_code="sea-sun",
+                twilio_whatsapp_number="+14155238886",
+                csrf_token=generate_csrf()
+            )
+    
+    return render_template_string(
+        FULL_TEMPLATE,
+        template='user_form',
+        course=course,
+        sandbox_code="sea-sun",
+        twilio_whatsapp_number="+14155238886",
+        csrf_token=generate_csrf()
+    )
+
+@app.route("/progress")
+def progress():
+    phone = session.get('phone')
+    course = session.get('course')
+    total_days = session.get('total_days', 0)
+    
+    if not phone or not course or not total_days:
+        return redirect(url_for('select_course'))
+    
+    completed_days = get_progress(phone, course)
+    
+    # Log current progress for debugging
+    logger.info(f"📊 Progress check: {phone} - {course} - {completed_days}/{total_days} days")
+    
+    return render_template_string(
+        FULL_TEMPLATE,
+        template='confirm',
+        course=course,
+        total_days=total_days,
+        completed_days=completed_days,
+        twilio_whatsapp_number="+14155238886",
+        csrf_token=generate_csrf()
+    )
+
+@app.route("/debug-schedules")
+def debug_schedules():
+    """Debug endpoint to see scheduled jobs"""
+    jobs = []
+    for job in scheduler.get_jobs():
+        jobs.append({
+            'id': job.id,
+            'next_run': job.next_run_time,
+            'args': job.args
+        })
+    
+    return jsonify({
+        'total_jobs': len(jobs),
+        'jobs': jobs,
+        'progress_store': progress_store,
+        'user_schedules': user_schedules
+    })
+
+@app.route("/test-send-now")
+def test_send_now():
+    """Test endpoint to send a message immediately"""
+    phone = session.get('phone')
+    course = session.get('course')
+    
+    if not phone or not course:
+        return "No phone or course in session"
+    
+    try:
+        content = generate_daily_content(course, 1, 1)
+        message = f"🧪 **TEST MESSAGE**\n\n{content}"
+        success = send_whatsapp(phone, message)
+        return f"Test message {'sent' if success else 'failed'}"
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 @app.route("/course-agent", methods=["GET", "POST"])
 def course_agent():
@@ -1209,5 +1151,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=True)
-
-
