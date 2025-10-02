@@ -14,6 +14,7 @@ import mysql.connector
 import logging
 import uuid
 import time
+import threading
 
 # === CONFIGURATION ===
 TWILIO_ACCOUNT_SID = "AC528ab24ab623cb4e38bcc3d1bddef076"
@@ -145,26 +146,29 @@ def send_whatsapp(to_phone, message):
         logger.error(f"❌ Error sending WhatsApp: {str(e)}")
         return False
 
-def scheduled_course_job(phone, course, part, total_days, schedule_id):
-    """Job function to send scheduled course content"""
+def send_course_lesson(phone, course, day, total_days):
+    """Send a course lesson immediately"""
     try:
-        logger.info(f"⏰ Executing scheduled job: {phone} - {course} - Day {part}")
+        logger.info(f"🎯 SENDING LESSON IMMEDIATELY: {phone} - {course} - Day {day}")
         
         # Generate content
-        content = generate_daily_content(course, part, total_days)
+        content = generate_daily_content(course, day, total_days)
         
         # Create the message
-        message = f"🎓 **{course} - Day {part}/{total_days}**\n\n{content}\n\n---\nReply 'STOP' to unsubscribe"
+        message = f"🎓 **{course} - Day {day}/{total_days}**\n\n{content}\n\n---\nReply 'STOP' to unsubscribe"
         
         # Send via WhatsApp
         if send_whatsapp(phone, message):
             increment_progress(phone, course)
-            logger.info(f"✅ Successfully delivered Day {part} to {phone}")
+            logger.info(f"✅ Successfully delivered Day {day} to {phone}")
+            return True
         else:
-            logger.error(f"❌ Failed to send Day {part} to {phone}")
+            logger.error(f"❌ Failed to send Day {day} to {phone}")
+            return False
             
     except Exception as e:
-        logger.error(f"❌ Error in scheduled job: {str(e)}")
+        logger.error(f"❌ Error sending course lesson: {str(e)}")
+        return False
 
 def remove_existing_jobs(phone, course):
     """Remove existing jobs for a user and course"""
@@ -180,10 +184,10 @@ def remove_existing_jobs(phone, course):
         logger.error(f"❌ Error removing existing jobs: {str(e)}")
         return 0
 
-def schedule_course_messages(phone, course, days, time_str):
-    """Schedule all course messages - INSTANT TESTING MODE"""
+def schedule_course_messages_instant(phone, course, days, time_str):
+    """Schedule all course messages - ULTRA INSTANT TESTING MODE"""
     try:
-        logger.info(f"📅 Scheduling {course} for {phone} over {days} days - INSTANT MODE")
+        logger.info(f"🚀 ULTRA INSTANT MODE: Scheduling {course} for {phone} over {days} days")
         
         # Remove any existing jobs for this user/course
         removed_count = remove_existing_jobs(phone, course)
@@ -202,7 +206,7 @@ def schedule_course_messages(phone, course, days, time_str):
         # Send welcome message immediately
         welcome_message = (
             f"Welcome to {course}! 🎉\n\n"
-            f"Your {days}-day learning journey starts now! "
+            f"Your {days}-day learning journey starts NOW! "
             f"You'll receive lessons immediately for testing.\n\n"
             "Get ready for your first lesson! 🚀\n\n"
             "Reply 'STOP' to unsubscribe at any time."
@@ -212,29 +216,41 @@ def schedule_course_messages(phone, course, days, time_str):
             logger.error("❌ Failed to send welcome message")
             return False
         
-        # INSTANT TEST MODE: Schedule messages with 10-second intervals
+        # ULTRA INSTANT MODE: Send first lesson immediately, then schedule others with 15-second intervals
+        logger.info(f"⚡ SENDING DAY 1 IMMEDIATELY")
+        
+        # Send Day 1 immediately in a separate thread to avoid blocking
+        def send_day1():
+            time.sleep(2)  # Small delay to ensure welcome message arrives first
+            send_course_lesson(phone, course, 1, days)
+        
+        day1_thread = threading.Thread(target=send_day1)
+        day1_thread.daemon = True
+        day1_thread.start()
+        
+        # Schedule remaining lessons with 15-second intervals
         now = datetime.now()
-        for day in range(1, days + 1):
-            # Schedule each message 10 seconds apart for instant testing
-            scheduled_time = now + timedelta(seconds=day * 10)
-            logger.info(f"⚡ INSTANT MODE: Scheduling Day {day} in {day * 10} seconds at {scheduled_time}")
+        for day in range(2, days + 1):
+            # Schedule each subsequent message 15 seconds apart
+            scheduled_time = now + timedelta(seconds=15 * (day - 1))
+            logger.info(f"⏰ Scheduling Day {day} in {15 * (day - 1)} seconds at {scheduled_time}")
             
             job_id = f"{phone}_{course}_day{day}_{schedule_id}"
             
             scheduler.add_job(
-                scheduled_course_job,
+                send_course_lesson,
                 'date',
                 run_date=scheduled_time,
-                args=[phone, course, day, days, schedule_id],
+                args=[phone, course, day, days],
                 id=job_id,
                 replace_existing=True
             )
             logger.info(f"✅ Scheduled Day {day} - Job ID: {job_id}")
         
-        # Reset progress for this course
+        # Reset progress for this course (but Day 1 will immediately increment it)
         reset_progress(phone, course)
         
-        logger.info(f"🎯 Successfully scheduled {days} days of {course} for {phone} in INSTANT MODE")
+        logger.info(f"🎯 Successfully scheduled {days} days of {course} for {phone} in ULTRA INSTANT MODE")
         return True
         
     except Exception as e:
@@ -358,7 +374,7 @@ FULL_TEMPLATE = '''
                 Your personalized learning journey, tailored to your schedule and goals
             </p>
             <div class="mt-4 bg-green-100 border border-green-400 text-green-800 px-4 py-3 rounded-lg inline-block">
-                <strong>⚡ INSTANT TEST MODE:</strong> Lessons will arrive every 10 seconds for immediate testing
+                <strong>⚡ ULTRA INSTANT TEST MODE:</strong> Day 1 sends immediately, then every 15 seconds!
             </div>
         </header>
         
@@ -639,8 +655,8 @@ FULL_TEMPLATE = '''
                                 </svg>
                             </div>
                             <div class="ml-3">
-                                <h3 class="text-sm font-medium text-green-800">Instant Test Mode Active</h3>
-                                <p class="text-sm text-green-700 mt-1">Lessons will arrive every 10 seconds for immediate testing. Perfect for verifying the system works!</p>
+                                <h3 class="text-sm font-medium text-green-800">Ultra Instant Test Mode Active</h3>
+                                <p class="text-sm text-green-700 mt-1">Day 1 sends immediately! Day 2 in 15 seconds, Day 3 in 30 seconds. Perfect for testing!</p>
                             </div>
                         </div>
                     </div>
@@ -709,7 +725,7 @@ FULL_TEMPLATE = '''
                                     {% endfor %}
                                 </select>
                             </div>
-                            <p class="mt-1 text-sm text-gray-500">When would you like to receive your daily lessons? (For testing, lessons will arrive every 10 seconds)</p>
+                            <p class="mt-1 text-sm text-gray-500">When would you like to receive your daily lessons? (For testing, lessons will arrive every 15 seconds)</p>
                         </div>
                         
                         <div class="pt-2">
@@ -840,7 +856,7 @@ FULL_TEMPLATE = '''
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Check your WhatsApp for the first lesson - it should arrive within 10 seconds (INSTANT TEST MODE)</span>
+                                <span class="text-gray-700">Check your WhatsApp - Day 1 should arrive within 2 seconds! Day 2 in 15 seconds, Day 3 in 30 seconds.</span>
                             </li>
                             <li class="flex items-start">
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -852,7 +868,7 @@ FULL_TEMPLATE = '''
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Lessons will arrive every 10 seconds for testing. Monitor your progress here!</span>
+                                <span class="text-gray-700">Monitor your progress here - it updates automatically after each lesson!</span>
                             </li>
                         </ul>
                     </div>
@@ -870,6 +886,15 @@ FULL_TEMPLATE = '''
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                             </svg>
                             View Progress
+                        </a>
+                    </div>
+                    
+                    <div class="mt-6">
+                        <a href="/send-now" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition duration-300">
+                            <svg class="w-5 h-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                            Send Next Lesson Now
                         </a>
                     </div>
                     
@@ -976,8 +1001,8 @@ def schedule_form():
             if not days.isdigit() or int(days) <= 0 or int(days) > 365:
                 raise ValueError("Please enter a valid number of days (1-365)")
             
-            # Schedule the course with INSTANT TEST MODE (10-second intervals)
-            if schedule_course_messages(phone, course, int(days), time):
+            # Schedule the course with ULTRA INSTANT TEST MODE
+            if schedule_course_messages_instant(phone, course, int(days), time):
                 session['phone'] = phone
                 session['course'] = course
                 session['total_days'] = int(days)
@@ -1059,20 +1084,25 @@ def debug_schedules():
         'user_schedules': user_schedules
     })
 
-@app.route("/test-send-now")
-def test_send_now():
-    """Test endpoint to send a message immediately"""
+@app.route("/send-now")
+def send_now():
+    """Send a lesson immediately for testing"""
     phone = session.get('phone')
     course = session.get('course')
+    total_days = session.get('total_days', 3)
     
     if not phone or not course:
         return "No phone or course in session"
     
     try:
-        content = generate_daily_content(course, 1, 1)
-        message = f"🧪 **INSTANT TEST MESSAGE**\n\n{content}"
-        success = send_whatsapp(phone, message)
-        return f"Test message {'sent' if success else 'failed'}"
+        current_progress = get_progress(phone, course)
+        day_to_send = current_progress + 1
+        
+        if day_to_send > total_days:
+            return "Course already completed!"
+        
+        success = send_course_lesson(phone, course, day_to_send, total_days)
+        return f"Day {day_to_send} {'sent successfully!' if success else 'failed to send'}"
     except Exception as e:
         return f"Error: {str(e)}"
 
