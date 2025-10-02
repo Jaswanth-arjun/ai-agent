@@ -15,13 +15,16 @@ import logging
 import uuid
 import time
 import threading
-
+from dotenv import load_dotenv
+load_dotenv()
 # === CONFIGURATION ===
-TWILIO_ACCOUNT_SID = "AC528ab24ab623cb4e38bcc3d1bddef076"
-TWILIO_AUTH_TOKEN = "76a526d490d111cf6aaff35d22690d27"
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
+TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY")
 TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"  # Twilio WhatsApp sandbox
-TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
-
+#TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
+if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]):
+    raise ValueError("Missing Twilio credentials in environment variables")
 # === Setup Together client ===
 together = Together(api_key=TOGETHER_API_KEY)
 
