@@ -1,4 +1,3 @@
-import compat
 import os
 import re
 import sqlite3
@@ -979,14 +978,11 @@ def certificate():
     date = datetime.now().strftime("%B %d, %Y")
 
     try:
-        conn = pymysql.connect(
-    host="localhost",
-    user="root",
-    password="",
-    database="userform",
-    charset='utf8mb4',
-    cursorclass=pymysql.cursors.DictCursor
-)
+        conn = mysql.connector.connect(
+            host="sql104.infinityfree.com",
+            user="if0_40043007",
+            password="FQM4N2z8L7ai9",
+            database="if0_40043007_db"
         )
 
         cur = conn.cursor()
@@ -1006,5 +1002,3 @@ def certificate():
 if __name__ == "__main__":
     scheduler.start()
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
-
-
