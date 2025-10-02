@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import mysql.connector
 import logging
 import uuid
+import time
 
 # === CONFIGURATION ===
 TWILIO_ACCOUNT_SID = "AC528ab24ab623cb4e38bcc3d1bddef076"
@@ -58,7 +59,7 @@ def generate_daily_content(course, part, days):
     try:
         if days == 1:
             prompt = f"""
-You are an expert course creator. Create a comprehensive single-day course for: '{course}'.
+Create a comprehensive single-day course for: '{course}'.
 
 Structure your response as follows:
 
@@ -67,26 +68,22 @@ Structure your response as follows:
 🧠 **Core Concepts**
 - Explain the 3-5 most important concepts
 - Include practical examples for each
-- Use simple, clear language
 
 💡 **Hands-On Practice**
 - Provide 2-3 practical exercises
 - Include step-by-step instructions
-- Suggest expected outcomes
 
 🔍 **Key Takeaways**
 - List 5-7 essential points to remember
-- Focus on practical applications
 
 🚀 **Next Steps**
 - Suggest how to continue learning
-- Recommend 2-3 resources
 
 Make it engaging and practical for a beginner!
 """
         else:
             prompt = f"""
-You are an expert course creator. Create lesson {part} of {days} for: '{course}'.
+Create lesson {part} of {days} for: '{course}'.
 
 Structure your response as follows:
 
@@ -98,18 +95,13 @@ Structure your response as follows:
 🧠 **Core Content**
 - Explain one key concept in detail
 - Include practical examples
-- Use simple, clear explanations
 
 💻 **Practice Exercise**
 - Provide one hands-on exercise
 - Include clear instructions
-- Suggest expected outcome
 
 📌 **Key Points to Remember**
 - List 3-5 important takeaways
-
-🔗 **Additional Resources**
-- Suggest 1-2 resources for further reading
 
 Focus only on content for Day {part}. Keep it concise and actionable!
 """
@@ -119,7 +111,7 @@ Focus only on content for Day {part}. Keep it concise and actionable!
             model="meta-llama/Llama-3-70b-chat-hf",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
-            max_tokens=1200
+            max_tokens=1000
         )
         content = response.choices[0].message.content.strip()
         logger.info(f"✅ Content generated successfully for Day {part}")
@@ -189,9 +181,9 @@ def remove_existing_jobs(phone, course):
         return 0
 
 def schedule_course_messages(phone, course, days, time_str):
-    """Schedule all course messages"""
+    """Schedule all course messages - INSTANT TESTING MODE"""
     try:
-        logger.info(f"📅 Scheduling {course} for {phone} over {days} days")
+        logger.info(f"📅 Scheduling {course} for {phone} over {days} days - INSTANT MODE")
         
         # Remove any existing jobs for this user/course
         removed_count = remove_existing_jobs(phone, course)
@@ -204,14 +196,14 @@ def schedule_course_messages(phone, course, days, time_str):
             'schedule_id': schedule_id,
             'total_days': days,
             'start_time': datetime.now(),
-            'test_mode': True  # Always enable test mode for now
+            'test_mode': True
         }
         
-        # Send welcome message
+        # Send welcome message immediately
         welcome_message = (
             f"Welcome to {course}! 🎉\n\n"
             f"Your {days}-day learning journey starts now! "
-            f"You'll receive daily lessons to help you master {course}.\n\n"
+            f"You'll receive lessons immediately for testing.\n\n"
             "Get ready for your first lesson! 🚀\n\n"
             "Reply 'STOP' to unsubscribe at any time."
         )
@@ -220,12 +212,12 @@ def schedule_course_messages(phone, course, days, time_str):
             logger.error("❌ Failed to send welcome message")
             return False
         
-        # Schedule all course messages - TEST MODE: 1 minute = 1 day
+        # INSTANT TEST MODE: Schedule messages with 10-second intervals
         now = datetime.now()
         for day in range(1, days + 1):
-            # TEST MODE: Schedule each minute instead of each day
-            scheduled_time = now + timedelta(minutes=day)
-            logger.info(f"🧪 TEST MODE: Scheduling Day {day} in {day} minute(s) at {scheduled_time}")
+            # Schedule each message 10 seconds apart for instant testing
+            scheduled_time = now + timedelta(seconds=day * 10)
+            logger.info(f"⚡ INSTANT MODE: Scheduling Day {day} in {day * 10} seconds at {scheduled_time}")
             
             job_id = f"{phone}_{course}_day{day}_{schedule_id}"
             
@@ -242,7 +234,7 @@ def schedule_course_messages(phone, course, days, time_str):
         # Reset progress for this course
         reset_progress(phone, course)
         
-        logger.info(f"🎯 Successfully scheduled {days} days of {course} for {phone} in TEST MODE")
+        logger.info(f"🎯 Successfully scheduled {days} days of {course} for {phone} in INSTANT MODE")
         return True
         
     except Exception as e:
@@ -365,8 +357,8 @@ FULL_TEMPLATE = '''
             <p class="text-lg md:text-xl text-gray-600 max-w-2xl mx-auto">
                 Your personalized learning journey, tailored to your schedule and goals
             </p>
-            <div class="mt-4 bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg inline-block">
-                <strong>🧪 TEST MODE:</strong> 1 minute = 1 day for testing
+            <div class="mt-4 bg-green-100 border border-green-400 text-green-800 px-4 py-3 rounded-lg inline-block">
+                <strong>⚡ INSTANT TEST MODE:</strong> Lessons will arrive every 10 seconds for immediate testing
             </div>
         </header>
         
@@ -639,16 +631,16 @@ FULL_TEMPLATE = '''
                         </div>
                     </div>
                     
-                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                    <div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
                         <div class="flex items-center">
                             <div class="flex-shrink-0">
-                                <svg class="h-5 w-5 text-yellow-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                                <svg class="h-5 w-5 text-green-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
                             </div>
                             <div class="ml-3">
-                                <h3 class="text-sm font-medium text-yellow-800">Test Mode Active</h3>
-                                <p class="text-sm text-yellow-700 mt-1">For testing: 1 minute = 1 day. Lessons will arrive every minute instead of daily.</p>
+                                <h3 class="text-sm font-medium text-green-800">Instant Test Mode Active</h3>
+                                <p class="text-sm text-green-700 mt-1">Lessons will arrive every 10 seconds for immediate testing. Perfect for verifying the system works!</p>
                             </div>
                         </div>
                     </div>
@@ -692,9 +684,9 @@ FULL_TEMPLATE = '''
                                         <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd" />
                                     </svg>
                                 </div>
-                                <input type="number" name="days" id="days" min="1" max="365" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="30" required>
+                                <input type="number" name="days" id="days" min="1" max="365" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="3" value="3" required>
                             </div>
-                            <p class="mt-1 text-sm text-gray-500">How many days would you like to complete the course in?</p>
+                            <p class="mt-1 text-sm text-gray-500">How many days would you like to complete the course in? (3 recommended for testing)</p>
                         </div>
                         
                         <div>
@@ -717,12 +709,12 @@ FULL_TEMPLATE = '''
                                     {% endfor %}
                                 </select>
                             </div>
-                            <p class="mt-1 text-sm text-gray-500">When would you like to receive your daily lessons?</p>
+                            <p class="mt-1 text-sm text-gray-500">When would you like to receive your daily lessons? (For testing, lessons will arrive every 10 seconds)</p>
                         </div>
                         
                         <div class="pt-2">
                             <button type="submit" class="w-full flex justify-center py-4 px-6 border border-transparent rounded-lg shadow-sm text-lg font-medium text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition duration-300 transform hover:-translate-y-1">
-                                Schedule My Learning
+                                Start Instant Test
                                 <svg class="ml-2 -mr-1 w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L12.586 11H5a1 1 0 110-2h7.586l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
                                 </svg>
@@ -775,7 +767,7 @@ FULL_TEMPLATE = '''
                     
                     <h2 class="text-2xl md:text-3xl font-bold text-gray-900 mb-3">Course Scheduled Successfully!</h2>
                     <p class="text-lg text-gray-600 mb-8">
-                        Your <span class="font-semibold text-primary-600">{{ course }}</span> course will begin as scheduled.
+                        Your <span class="font-semibold text-primary-600">{{ course }}</span> course will begin immediately.
                     </p>
                     
                     <!-- Progress Tracker - Moved to top -->
@@ -848,7 +840,7 @@ FULL_TEMPLATE = '''
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Check your WhatsApp for the first lesson - it should arrive within 1 minute (TEST MODE)</span>
+                                <span class="text-gray-700">Check your WhatsApp for the first lesson - it should arrive within 10 seconds (INSTANT TEST MODE)</span>
                             </li>
                             <li class="flex items-start">
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -860,7 +852,7 @@ FULL_TEMPLATE = '''
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Join our <a href="#" class="text-primary-600 hover:underline">community forum</a> for peer support and additional resources</span>
+                                <span class="text-gray-700">Lessons will arrive every 10 seconds for testing. Monitor your progress here!</span>
                             </li>
                         </ul>
                     </div>
@@ -984,7 +976,7 @@ def schedule_form():
             if not days.isdigit() or int(days) <= 0 or int(days) > 365:
                 raise ValueError("Please enter a valid number of days (1-365)")
             
-            # Schedule the course with TEST MODE (1 minute = 1 day)
+            # Schedule the course with INSTANT TEST MODE (10-second intervals)
             if schedule_course_messages(phone, course, int(days), time):
                 session['phone'] = phone
                 session['course'] = course
@@ -1078,7 +1070,7 @@ def test_send_now():
     
     try:
         content = generate_daily_content(course, 1, 1)
-        message = f"🧪 **TEST MESSAGE**\n\n{content}"
+        message = f"🧪 **INSTANT TEST MESSAGE**\n\n{content}"
         success = send_whatsapp(phone, message)
         return f"Test message {'sent' if success else 'failed'}"
     except Exception as e:
