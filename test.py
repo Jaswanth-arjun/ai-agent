@@ -1096,7 +1096,7 @@ def schedule_form():
                 template='user_form',
                 course=course,
                 error=error_message,
-                sandbox_code="sea-sun",
+                sandbox_code="aloud-coming",
                 twilio_whatsapp_number="+14155238886",
                 csrf_token=generate_csrf()
             )
@@ -1251,3 +1251,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=True)
+
