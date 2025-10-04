@@ -265,7 +265,7 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
         if removed_count > 0:
             logger.info(f"🗑️ Removed {removed_count} existing jobs")
         
-        # Create a unique schedule ID for this course enrollment
+        # Create a unique schedule ID
         schedule_id = str(uuid.uuid4())[:8]
         user_schedules[(phone, course)] = {
             'schedule_id': schedule_id,
@@ -293,59 +293,43 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
             logger.error("❌ Failed to send welcome message")
             return False
         
-        # Schedule all lessons including Day 1
+        # Convert user's preferred time to 24-hour format
+        time_obj = datetime.strptime(time_str, "%I:%M %p")
         now = datetime.now()
+        
+        # Schedule all lessons
         for day in range(1, days + 1):
-            try:
-                # Convert user's preferred time to 24-hour format
-                time_obj = datetime.strptime(time_str, "%I:%M %p")
+            # Calculate the target date for this lesson
+            days_to_add = day - 1
+            scheduled_time = now + timedelta(days=days_to_add)
+            scheduled_time = scheduled_time.replace(
+                hour=time_obj.hour, 
+                minute=time_obj.minute, 
+                second=0, 
+                microsecond=0
+            )
                 
-                # Schedule each day at the user's preferred time
-                scheduled_time = now + timedelta(days=day-1)
-                scheduled_time = scheduled_time.replace(
-                    hour=time_obj.hour, 
-                    minute=time_obj.minute, 
-                    second=0, 
-                    microsecond=0
-                )
-                
-                logger.info(f"⏰ Scheduling Day {day} for {scheduled_time}")
-                
-                job_id = f"{phone}_{course}_day{day}_{schedule_id}"
-                
-                scheduler.add_job(
-                    send_course_lesson,
-                    'date',
-                    run_date=scheduled_time,
-                    args=[phone, course, day, days],
-                    id=job_id,
-                    replace_existing=True
-                )
-                logger.info(f"✅ Scheduled Day {day}")
-                
-            except ValueError as e:
-                logger.error(f"❌ Error parsing time {time_str}: {e}")
-                # Fallback to 9:00 AM
-                scheduled_time = now + timedelta(days=day-1)
-                scheduled_time = scheduled_time.replace(hour=9, minute=0, second=0, microsecond=0)
-                
-                job_id = f"{phone}_{course}_day{day}_{schedule_id}"
-                scheduler.add_job(
-                    send_course_lesson,
-                    'date',
-                    run_date=scheduled_time,
-                    args=[phone, course, day, days],
-                    id=job_id,
-                    replace_existing=True
-                )
-                logger.info(f"✅ Scheduled Day {day} with fallback time 9:00 AM")
+               if scheduled_time < now:
+                scheduled_time += timedelta(days=1)
+                logger.info(f"⏰ Scheduled time was in past, moved to: {scheduled_time}")
+            
+            job_id = f"{phone}_{course}_day{day}_{schedule_id}"
+            
+            scheduler.add_job(
+                send_course_lesson,
+                'date',
+                run_date=scheduled_time,
+                args=[phone, course, day, days],
+                id=job_id,
+                replace_existing=True
+            )
+            logger.info(f"✅ Scheduled Day {day} for {scheduled_time}")
         
         # Reset progress for this course
         reset_progress(phone, course)
         
         logger.info(f"🎯 Successfully scheduled {days} days of detailed content")
         return True
-        
     except Exception as e:
         logger.error(f"❌ Failed to schedule detailed course: {str(e)}")
         return False
@@ -1259,3 +1243,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)  # Set debug=False for production
+
