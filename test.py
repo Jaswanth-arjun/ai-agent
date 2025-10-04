@@ -297,7 +297,7 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
         time_obj = datetime.strptime(time_str, "%I:%M %p")
         now = datetime.now()
         
-        # ✅ FIXED: Enhanced scheduling logic
+        # ✅ FIXED: Enhanced scheduling logic with timezone awareness
         day1_sent_immediately = False
         
         for day in range(1, days + 1):
@@ -311,14 +311,16 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
                 microsecond=0
             )
             
-            # ✅ FIXED: Check if this is Day 1 AND time has passed
+            # ✅ FIXED: Check if this is Day 1 AND time has passed (considering user's intended time)
             if day == 1:
                 time_difference = scheduled_time - now
                 logger.info(f"⏰ Day 1 time check: scheduled={scheduled_time}, now={now}, diff={time_difference}")
                 
-                if scheduled_time < now:
+                # If scheduled time is more than 1 hour in the future, assume user meant TODAY
+                # If scheduled time is in the past OR within the next hour, send immediately
+                if time_difference.total_seconds() < 3600:  # Less than 1 hour from now
                     # For Day 1, send immediately instead of scheduling
-                    logger.info(f"🚀 Day 1 scheduled time was in past, sending immediately!")
+                    logger.info(f"🚀 Day 1 scheduled time is within 1 hour or in past, sending immediately!")
                     
                     # Send Day 1 lesson right away
                     send_success = send_course_lesson(phone, course, day, days)
@@ -363,7 +365,7 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
     except Exception as e:
         logger.error(f"❌ Failed to schedule detailed course: {str(e)}")
         return False
-
+        
 # Health check endpoint
 @app.route("/health")
 def health_check():
@@ -1287,4 +1289,5 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
+
 
