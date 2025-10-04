@@ -49,9 +49,19 @@ scheduler = BackgroundScheduler(jobstores=jobstores)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === GLOBAL PROGRESS STORE (for demo/testing; use a DB for production) ===
+# === FIXED: ENHANCED PROGRESS STORE WITH USER NAMES ===
 progress_store = {}  # key: (phone, course), value: int (completed days)
 user_schedules = {}  # Store user schedule information
+user_names = {}  # NEW: Store user names for certificates
+
+def store_user_name(phone, name):
+    """Store user name for certificate generation"""
+    user_names[phone] = name
+    logger.info(f"✅ User name stored: {phone} - {name}")
+
+def get_user_name(phone):
+    """Get user name for certificate generation"""
+    return user_names.get(phone, phone)  # Return phone if name not found
 
 def increment_progress(phone, course):
     key = (phone, course)
@@ -65,6 +75,11 @@ def get_progress(phone, course):
 def reset_progress(phone, course):
     progress_store[(phone, course)] = 0
     logger.info(f"🔄 Progress reset: {phone} - {course}")
+
+def is_course_completed(phone, course, total_days):
+    """Check if course is actually completed"""
+    progress = get_progress(phone, course)
+    return progress >= total_days
 
 def split_long_message(message, max_length=1500):
     """Split long messages into multiple parts that fit within WhatsApp limits"""
@@ -232,6 +247,18 @@ def send_course_lesson(phone, course, day, total_days):
         if success_count == len(message_parts):
             increment_progress(phone, course)
             logger.info(f"✅ Successfully delivered Day {day} ({len(message_parts)} parts) to {phone}")
+            
+            # Check if course is completed and send completion message
+            if day == total_days:
+                completion_message = (
+                    f"🎉 CONGRATULATIONS! 🎉\n\n"
+                    f"You have successfully completed the {course} course!\n\n"
+                    f"📊 Final Progress: {total_days}/{total_days} days completed\n\n"
+                    f"🏆 You can now download your certificate from the LearnHub website.\n\n"
+                    f"Thank you for learning with us! 👨‍🎓👩‍🎓"
+                )
+                send_whatsapp(phone, completion_message)
+            
             return True
         else:
             logger.error(f"❌ Failed to send all parts of Day {day} to {phone}")
@@ -255,15 +282,22 @@ def remove_existing_jobs(phone, course):
         logger.error(f"❌ Error removing existing jobs: {str(e)}")
         return 0
 
-def schedule_course_messages_detailed(phone, course, days, time_str):
+def schedule_course_messages_detailed(phone, course, days, time_str, user_name=None):
     """Schedule detailed course messages with proper intervals"""
     try:
         logger.info(f"🚀 DETAILED COURSE MODE: Scheduling {course} for {phone} over {days} days")
+        
+        # Store user name if provided
+        if user_name:
+            store_user_name(phone, user_name)
         
         # Remove any existing jobs for this user/course
         removed_count = remove_existing_jobs(phone, course)
         if removed_count > 0:
             logger.info(f"🗑️ Removed {removed_count} existing jobs")
+        
+        # Reset progress for this course
+        reset_progress(phone, course)
         
         # Create a unique schedule ID
         schedule_id = str(uuid.uuid4())[:8]
@@ -271,7 +305,7 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
             'schedule_id': schedule_id,
             'total_days': days,
             'start_time': datetime.now(),
-            'test_mode': True
+            'user_name': user_name
         }
         
         # Send welcome message immediately
@@ -293,13 +327,12 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
             logger.error("❌ Failed to send welcome message")
             return False
         
-        # ✅ SIMPLE FIX: ALWAYS send Day 1 immediately
+        # ✅ FIXED: Send Day 1 immediately
         logger.info(f"🚀 SENDING DAY 1 IMMEDIATELY")
         send_success = send_course_lesson(phone, course, 1, days)
         
         if send_success:
             logger.info(f"✅ Day 1 lesson sent immediately to {phone}")
-            increment_progress(phone, course)  # Mark Day 1 as completed
         else:
             logger.error(f"❌ Failed to send Day 1 lesson to {phone}")
             return False
@@ -342,7 +375,7 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
     except Exception as e:
         logger.error(f"❌ Failed to schedule detailed course: {str(e)}")
         return False
-        
+
 # Health check endpoint
 @app.route("/health")
 def health_check():
@@ -353,7 +386,7 @@ def health_check():
         "timestamp": datetime.now().isoformat()
     })
 
-# ... (KEEP ALL THE HTML TEMPLATE EXACTLY THE SAME AS BEFORE)
+# FIXED: UPDATED HTML TEMPLATE WITH NAME FIELD
 FULL_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -775,6 +808,18 @@ FULL_TEMPLATE = '''
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <input type="hidden" name="course" value="{{ course }}">
                         
+                        <!-- FIXED: ADDED NAME FIELD -->
+                        <div>
+                            <label for="name" class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                            <div class="relative">
+                                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                    <i class="fas fa-user text-gray-400"></i>
+                                </div>
+                                <input type="text" name="name" id="name" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg input-focus focus:outline-none focus:ring-primary-500 focus:border-primary-500" placeholder="Enter your full name" required>
+                            </div>
+                            <p class="mt-1 text-sm text-gray-500">This name will be printed on your completion certificate</p>
+                        </div>
+                        
                         <div>
                             <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">WhatsApp Number</label>
                             <div class="relative">
@@ -841,13 +886,20 @@ FULL_TEMPLATE = '''
         
         <script>
             function validateForm() {
+                const name = document.getElementById('name').value;
                 const phone = document.getElementById('phone').value;
                 const days = document.getElementById('days').value;
                 const time = document.getElementById('time').value;
                 
                 // Basic validation
-                if (!phone || !days || !time) {
+                if (!name || !phone || !days || !time) {
                     alert('Please fill in all required fields');
+                    return false;
+                }
+                
+                // Name validation
+                if (name.trim().length < 2) {
+                    alert('Please enter your full name');
                     return false;
                 }
                 
@@ -954,7 +1006,7 @@ FULL_TEMPLATE = '''
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Check your WhatsApp for the first lesson - it should arrive within 24 hours</span>
+                                <span class="text-gray-700">Check your WhatsApp for the first lesson - it should arrive immediately</span>
                             </li>
                             <li class="flex items-start">
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -987,7 +1039,8 @@ FULL_TEMPLATE = '''
                         </a>
                     </div>
                     
-                    {% if completed_days == total_days %}
+                    <!-- FIXED: Only show certificate button when course is actually completed -->
+                    {% if completed_days >= total_days %}
                     <div class="mt-8">
                         <a href="/certificate" class="inline-flex items-center px-8 py-3 border border-transparent text-lg font-medium rounded-full shadow-sm text-white bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition duration-300 transform hover:-translate-y-1">
                             <svg class="w-6 h-6 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1076,13 +1129,17 @@ def schedule_form():
     
     if request.method == "POST":
         try:
+            name = request.form.get("name", "").strip()
             phone = request.form.get("phone", "").strip()
             days = request.form.get("days", "").strip()
             time = request.form.get("time", "").strip()
             
             # Validation
-            if not all([phone, days, time]):
+            if not all([name, phone, days, time]):
                 raise ValueError("All fields are required")
+            
+            if len(name) < 2:
+                raise ValueError("Please enter a valid name")
             
             if not phone.startswith('+'):
                 raise ValueError("Please enter a valid WhatsApp number with country code (e.g., +1 for US)")
@@ -1090,11 +1147,12 @@ def schedule_form():
             if not days.isdigit() or int(days) <= 0 or int(days) > 365:
                 raise ValueError("Please enter a valid number of days (1-365)")
             
-            # Schedule the course with DETAILED CONTENT MODE
-            if schedule_course_messages_detailed(phone, course, int(days), time):
+            # Schedule the course with DETAILED CONTENT MODE and USER NAME
+            if schedule_course_messages_detailed(phone, course, int(days), time, name):
                 session['phone'] = phone
                 session['course'] = course
                 session['total_days'] = int(days)
+                session['user_name'] = name  # Store name in session
                 return redirect(url_for('progress'))
             else:
                 raise Exception("Failed to schedule course messages")
@@ -1169,7 +1227,8 @@ def debug_schedules():
         'total_jobs': len(jobs),
         'jobs': jobs,
         'progress_store': progress_store,
-        'user_schedules': user_schedules
+        'user_schedules': user_schedules,
+        'user_names': user_names
     })
 
 @app.route("/send-now")
@@ -1228,27 +1287,16 @@ def certificate():
 
     phone = session["phone"]
     course = session.get("course", "Your Course")
+    total_days = session.get("total_days", 0)
+    
+    # FIXED: Check if course is actually completed
+    if not is_course_completed(phone, course, total_days):
+        return redirect(url_for('progress'))
+
     date = datetime.now().strftime("%B %d, %Y")
 
-    try:
-        conn = mysql.connector.connect(
-            host="profound-jade-orca-vpmg5-mysql.profound-jade-orca-vpmg5.svc.cluster.local",
-            user="mink",
-            password="wK2+fH1_wU4=pO4-zJ0_",
-            database="profound-jade-orca"
-        )
-
-        cur = conn.cursor()
-        cur.execute("SELECT name FROM usertable WHERE phone = %s", (phone,))
-        result = cur.fetchone()
-        name = result[0] if result else phone
-
-        cur.close()
-        conn.close()
-
-    except Exception as e:
-        print("❌ Error fetching name from MySQL:", e)
-        name = phone
+    # FIXED: Get user name from our stored names
+    name = get_user_name(phone)
 
     return render_template("cert.html", name=name, course=course, date=date)
 
@@ -1266,6 +1314,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
-
-
-
