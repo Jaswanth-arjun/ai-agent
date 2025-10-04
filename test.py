@@ -4,7 +4,7 @@ import sqlite3
 from twilio.rest import Client
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, send_file, render_template
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore  # ADD THIS IMPORT
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from together import Together
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 from io import BytesIO
@@ -36,7 +36,7 @@ twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 # === Flask & Scheduler Setup ===
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "your-fixed-secret-key-change-this")
 csrf = CSRFProtect(app)
 
 # FIXED: Persistent scheduler with SQLite job store
@@ -297,7 +297,9 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
         time_obj = datetime.strptime(time_str, "%I:%M %p")
         now = datetime.now()
         
-        # Schedule all lessons
+        # ✅ ENHANCED: Schedule all lessons with immediate Day 1 delivery if past time
+        day1_sent_immediately = False
+        
         for day in range(1, days + 1):
             # Calculate the target date for this lesson
             days_to_add = day - 1
@@ -308,8 +310,46 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
                 second=0, 
                 microsecond=0
             )
+            
+            # ✅ ENHANCED LOGIC: For Day 1, send immediately if past time
+            if day == 1 and scheduled_time < now:
+                # For Day 1, send immediately instead of waiting for tomorrow
+                logger.info(f"🚀 Day 1 scheduled time was in past, sending immediately")
                 
-               if scheduled_time < now:
+                # Send Day 1 lesson right away
+                send_success = send_course_lesson(phone, course, day, days)
+                if send_success:
+                    logger.info(f"✅ Day 1 lesson sent immediately to {phone}")
+                    day1_sent_immediately = True
+                else:
+                    logger.error(f"❌ Failed to send Day 1 lesson immediately to {phone}")
+                
+                # Schedule Day 2 for tomorrow at the regular time
+                if days > 1:
+                    day2_time = now + timedelta(days=1)
+                    day2_time = day2_time.replace(
+                        hour=time_obj.hour, 
+                        minute=time_obj.minute, 
+                        second=0, 
+                        microsecond=0
+                    )
+                    
+                    job_id = f"{phone}_{course}_day2_{schedule_id}"
+                    scheduler.add_job(
+                        send_course_lesson,
+                        'date',
+                        run_date=day2_time,
+                        args=[phone, course, 2, days],
+                        id=job_id,
+                        replace_existing=True
+                    )
+                    logger.info(f"✅ Scheduled Day 2 for {day2_time}")
+                
+                # Skip scheduling Day 1 since we sent it immediately
+                continue
+                
+            elif scheduled_time < now:
+                # For other days, move to next day if time has passed
                 scheduled_time += timedelta(days=1)
                 logger.info(f"⏰ Scheduled time was in past, moved to: {scheduled_time}")
             
@@ -325,14 +365,26 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
             )
             logger.info(f"✅ Scheduled Day {day} for {scheduled_time}")
         
-        # Reset progress for this course
-        reset_progress(phone, course)
+        # Reset progress for this course (unless we sent Day 1 immediately)
+        if not day1_sent_immediately:
+            reset_progress(phone, course)
         
         logger.info(f"🎯 Successfully scheduled {days} days of detailed content")
         return True
+        
     except Exception as e:
         logger.error(f"❌ Failed to schedule detailed course: {str(e)}")
         return False
+
+# Health check endpoint
+@app.route("/health")
+def health_check():
+    return jsonify({
+        "status": "healthy",
+        "scheduler_running": scheduler.running,
+        "jobs_count": len(scheduler.get_jobs()),
+        "timestamp": datetime.now().isoformat()
+    })
 
 # ... (KEEP ALL THE HTML TEMPLATE EXACTLY THE SAME AS BEFORE)
 FULL_TEMPLATE = '''
@@ -1233,6 +1285,10 @@ def certificate():
 
     return render_template("cert.html", name=name, course=course, date=date)
 
+# Graceful shutdown
+import atexit
+atexit.register(lambda: scheduler.shutdown())
+
 if __name__ == "__main__":
     # FIXED: Start persistent scheduler
     if not scheduler.running:
@@ -1242,5 +1298,4 @@ if __name__ == "__main__":
     
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Flask app on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False)  # Set debug=False for production
-
+    app.run(host='0.0.0.0', port=port, debug=False)
