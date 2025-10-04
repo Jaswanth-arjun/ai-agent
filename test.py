@@ -4,6 +4,7 @@ import sqlite3
 from twilio.rest import Client
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify, send_file, render_template
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore  # ADD THIS IMPORT
 from together import Together
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 from io import BytesIO
@@ -17,14 +18,16 @@ import time
 import threading
 from dotenv import load_dotenv
 load_dotenv()
+
 # === CONFIGURATION ===
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY")
 TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"  # Twilio WhatsApp sandbox
-#TOGETHER_API_KEY = "78099f081adbc36ae685a12a798f72ee5bc90e17436b71aba902cc1f854495ff"
+
 if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]):
     raise ValueError("Missing Twilio credentials in environment variables")
+
 # === Setup Together client ===
 together = Together(api_key=TOGETHER_API_KEY)
 
@@ -35,7 +38,12 @@ twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 csrf = CSRFProtect(app)
-scheduler = BackgroundScheduler()
+
+# FIXED: Persistent scheduler with SQLite job store
+jobstores = {
+    'default': SQLAlchemyJobStore(url='sqlite:///jobs.sqlite')
+}
+scheduler = BackgroundScheduler(jobstores=jobstores)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -343,8 +351,6 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
         return False
 
 # ... (KEEP ALL THE HTML TEMPLATE EXACTLY THE SAME AS BEFORE)
-
-# ... (KEEP ALL THE HTML TEMPLATE EXACTLY THE SAME AS BEFORE, just update the headers)
 FULL_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -1046,6 +1052,7 @@ FULL_TEMPLATE = '''
 </body>
 </html>
 '''
+
 @app.route('/', methods=['GET', 'POST'])
 def select_course():
     if request.method == "POST":
@@ -1243,12 +1250,12 @@ def certificate():
     return render_template("cert.html", name=name, course=course, date=date)
 
 if __name__ == "__main__":
-    # Start the scheduler
+    # FIXED: Start persistent scheduler
     if not scheduler.running:
         scheduler.start()
-        logger.info("✅ Background scheduler started")
+        job_count = len(scheduler.get_jobs())
+        logger.info(f"✅ Persistent scheduler started with {job_count} jobs")
     
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Flask app on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=True)
-
+    app.run(host='0.0.0.0', port=port, debug=False)  # Set debug=False for production
