@@ -283,9 +283,9 @@ def remove_existing_jobs(phone, course):
         return 0
 
 def schedule_course_messages_detailed(phone, course, days, time_str, user_name=None):
-    """Schedule detailed course messages with proper intervals"""
+    """Schedule detailed course messages with proper time handling"""
     try:
-        logger.info(f"🚀 DETAILED COURSE MODE: Scheduling {course} for {phone} over {days} days")
+        logger.info(f"🚀 DETAILED COURSE MODE: Scheduling {course} for {phone} over {days} days at {time_str}")
         
         # Store user name if provided
         if user_name:
@@ -301,12 +301,22 @@ def schedule_course_messages_detailed(phone, course, days, time_str, user_name=N
         
         # Create a unique schedule ID
         schedule_id = str(uuid.uuid4())[:8]
-        user_schedules[(phone, course)] = {
-            'schedule_id': schedule_id,
-            'total_days': days,
-            'start_time': datetime.now(),
-            'user_name': user_name
-        }
+        
+        # Convert user's preferred time to 24-hour format
+        time_obj = datetime.strptime(time_str, "%I:%M %p")
+        now = datetime.now()
+        
+        # Create today's scheduled time with user's preferred time
+        scheduled_time_today = now.replace(
+            hour=time_obj.hour, 
+            minute=time_obj.minute, 
+            second=0, 
+            microsecond=0
+        )
+        
+        # FIXED: SMART TIME HANDLING LOGIC
+        current_progress = get_progress(phone, course)
+        day_to_start = current_progress + 1
         
         # Send welcome message immediately
         welcome_message = (
@@ -327,49 +337,80 @@ def schedule_course_messages_detailed(phone, course, days, time_str, user_name=N
             logger.error("❌ Failed to send welcome message")
             return False
         
-        # ✅ FIXED: Send Day 1 immediately
-        logger.info(f"🚀 SENDING DAY 1 IMMEDIATELY")
-        send_success = send_course_lesson(phone, course, 1, days)
-        
-        if send_success:
-            logger.info(f"✅ Day 1 lesson sent immediately to {phone}")
+        # FIXED: SMART SCHEDULING BASED ON TIME
+        if scheduled_time_today <= now:
+            # PAST TIME: Send today's lesson immediately, schedule next days at selected time
+            logger.info(f"⏰ Past time detected: {time_str} - Sending Day {day_to_start} immediately")
+            
+            # Send current day immediately
+            if day_to_start <= days:
+                send_success = send_course_lesson(phone, course, day_to_start, days)
+                if send_success:
+                    logger.info(f"✅ Day {day_to_start} sent immediately (past time)")
+                    day_to_start += 1
+                else:
+                    logger.error(f"❌ Failed to send Day {day_to_start}")
+            
+            # Schedule remaining days starting from tomorrow at selected time
+            for day in range(day_to_start, days + 1):
+                days_to_add = day - 1  # Calculate days from today
+                scheduled_time = now + timedelta(days=days_to_add)
+                scheduled_time = scheduled_time.replace(
+                    hour=time_obj.hour, 
+                    minute=time_obj.minute, 
+                    second=0, 
+                    microsecond=0
+                )
+                
+                job_id = f"{phone}_{course}_day{day}_{schedule_id}"
+                
+                scheduler.add_job(
+                    send_course_lesson,
+                    'date',
+                    run_date=scheduled_time,
+                    args=[phone, course, day, days],
+                    id=job_id,
+                    replace_existing=True
+                )
+                logger.info(f"✅ Scheduled Day {day} for {scheduled_time} (past time handling)")
+                
         else:
-            logger.error(f"❌ Failed to send Day 1 lesson to {phone}")
-            return False
-        
-        # Convert user's preferred time to 24-hour format for future days
-        time_obj = datetime.strptime(time_str, "%I:%M %p")
-        now = datetime.now()
-        
-        # Schedule remaining days starting from TOMORROW
-        for day in range(2, days + 1):  # Start from Day 2
-            days_to_add = day - 1  # Day 2 = tomorrow, Day 3 = day after, etc.
-            scheduled_time = now + timedelta(days=days_to_add)
-            scheduled_time = scheduled_time.replace(
-                hour=time_obj.hour, 
-                minute=time_obj.minute, 
-                second=0, 
-                microsecond=0
-            )
+            # FUTURE TIME: Schedule all lessons starting from today at selected time
+            logger.info(f"⏰ Future time detected: {time_str} - Scheduling all lessons at selected time")
             
-            # Ensure scheduled time is not in the past
-            if scheduled_time < now:
-                scheduled_time += timedelta(days=1)
-                logger.info(f"⏰ Adjusted Day {day} to: {scheduled_time}")
-            
-            job_id = f"{phone}_{course}_day{day}_{schedule_id}"
-            
-            scheduler.add_job(
-                send_course_lesson,
-                'date',
-                run_date=scheduled_time,
-                args=[phone, course, day, days],
-                id=job_id,
-                replace_existing=True
-            )
-            logger.info(f"✅ Scheduled Day {day} for {scheduled_time}")
+            for day in range(1, days + 1):
+                days_to_add = day - 1  # Day 1 = today, Day 2 = tomorrow, etc.
+                scheduled_time = now + timedelta(days=days_to_add)
+                scheduled_time = scheduled_time.replace(
+                    hour=time_obj.hour, 
+                    minute=time_obj.minute, 
+                    second=0, 
+                    microsecond=0
+                )
+                
+                job_id = f"{phone}_{course}_day{day}_{schedule_id}"
+                
+                scheduler.add_job(
+                    send_course_lesson,
+                    'date',
+                    run_date=scheduled_time,
+                    args=[phone, course, day, days],
+                    id=job_id,
+                    replace_existing=True
+                )
+                logger.info(f"✅ Scheduled Day {day} for {scheduled_time} (future time handling)")
         
-        logger.info(f"🎯 Successfully scheduled {days} days of detailed content")
+        # Store schedule information
+        user_schedules[(phone, course)] = {
+            'schedule_id': schedule_id,
+            'total_days': days,
+            'start_time': datetime.now(),
+            'user_name': user_name,
+            'preferred_time': time_str,
+            'scheduled_days': days
+        }
+        
+        logger.info(f"🎯 Successfully scheduled {days} days of detailed content with smart time handling")
         return True
         
     except Exception as e:
@@ -386,7 +427,8 @@ def health_check():
         "timestamp": datetime.now().isoformat()
     })
 
-# FIXED: UPDATED HTML TEMPLATE WITH NAME FIELD
+# ... (KEEP THE SAME HTML TEMPLATE AS BEFORE - it already has the name field)
+
 FULL_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -493,6 +535,16 @@ FULL_TEMPLATE = '''
             text-align: center;
             font-weight: bold;
         }
+        
+        .time-info-banner {
+            background: linear-gradient(90deg, #60a5fa, #3b82f6);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            text-align: center;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body class="bg-gradient-to-br from-primary-50 to-primary-100 min-h-screen">
@@ -500,6 +552,12 @@ FULL_TEMPLATE = '''
         {% if test_mode %}
         <div class="test-mode-banner">
             🚀 TEST MODE: 1 Day = 1 Minute - Lessons will arrive every minute instead of daily
+        </div>
+        {% endif %}
+        
+        {% if time_str %}
+        <div class="time-info-banner">
+            ⏰ Smart Time Detection: Lessons will be delivered at {{ time_str }} based on your selection
         </div>
         {% endif %}
         
@@ -869,6 +927,7 @@ FULL_TEMPLATE = '''
                                 </select>
                             </div>
                             <p class="mt-1 text-sm text-gray-500">When would you like to receive your daily lessons?</p>
+                            <p class="mt-1 text-sm text-blue-600 font-medium">⏰ Smart Scheduling: If time is past today, first lesson comes immediately. Future times start at selected time.</p>
                         </div>
                         
                         <div class="pt-2">
@@ -1006,7 +1065,13 @@ FULL_TEMPLATE = '''
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-gray-700">Check your WhatsApp for the first lesson - it should arrive immediately</span>
+                                <span class="text-gray-700">
+                                    {% if time_str %}
+                                    Lessons will arrive daily at <strong>{{ time_str }}</strong>
+                                    {% else %}
+                                    Check your WhatsApp for the first lesson
+                                    {% endif %}
+                                </span>
                             </li>
                             <li class="flex items-start">
                                 <svg class="flex-shrink-0 w-5 h-5 text-primary-600 mt-0.5 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -1132,10 +1197,10 @@ def schedule_form():
             name = request.form.get("name", "").strip()
             phone = request.form.get("phone", "").strip()
             days = request.form.get("days", "").strip()
-            time = request.form.get("time", "").strip()
+            time_str = request.form.get("time", "").strip()
             
             # Validation
-            if not all([name, phone, days, time]):
+            if not all([name, phone, days, time_str]):
                 raise ValueError("All fields are required")
             
             if len(name) < 2:
@@ -1147,12 +1212,13 @@ def schedule_form():
             if not days.isdigit() or int(days) <= 0 or int(days) > 365:
                 raise ValueError("Please enter a valid number of days (1-365)")
             
-            # Schedule the course with DETAILED CONTENT MODE and USER NAME
-            if schedule_course_messages_detailed(phone, course, int(days), time, name):
+            # Schedule the course with SMART TIME HANDLING
+            if schedule_course_messages_detailed(phone, course, int(days), time_str, name):
                 session['phone'] = phone
                 session['course'] = course
                 session['total_days'] = int(days)
-                session['user_name'] = name  # Store name in session
+                session['user_name'] = name
+                session['time_str'] = time_str  # Store time for display
                 return redirect(url_for('progress'))
             else:
                 raise Exception("Failed to schedule course messages")
@@ -1194,6 +1260,7 @@ def progress():
     phone = session.get('phone')
     course = session.get('course')
     total_days = session.get('total_days', 0)
+    time_str = session.get('time_str', '')
     
     if not phone or not course or not total_days:
         return redirect(url_for('select_course'))
@@ -1208,6 +1275,7 @@ def progress():
         course=course,
         total_days=total_days,
         completed_days=completed_days,
+        time_str=time_str,
         twilio_whatsapp_number="+14155238886",
         csrf_token=generate_csrf()
     )
