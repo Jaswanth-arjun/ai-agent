@@ -297,7 +297,7 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
         time_obj = datetime.strptime(time_str, "%I:%M %p")
         now = datetime.now()
         
-        # ✅ ENHANCED: Schedule all lessons with immediate Day 1 delivery if past time
+        # ✅ FIXED: Enhanced scheduling logic
         day1_sent_immediately = False
         
         for day in range(1, days + 1):
@@ -311,45 +311,29 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
                 microsecond=0
             )
             
-            # ✅ ENHANCED LOGIC: For Day 1, send immediately if past time
-            if day == 1 and scheduled_time < now:
-                # For Day 1, send immediately instead of waiting for tomorrow
-                logger.info(f"🚀 Day 1 scheduled time was in past, sending immediately")
+            # ✅ FIXED: Check if this is Day 1 AND time has passed
+            if day == 1:
+                time_difference = scheduled_time - now
+                logger.info(f"⏰ Day 1 time check: scheduled={scheduled_time}, now={now}, diff={time_difference}")
                 
-                # Send Day 1 lesson right away
-                send_success = send_course_lesson(phone, course, day, days)
-                if send_success:
-                    logger.info(f"✅ Day 1 lesson sent immediately to {phone}")
-                    day1_sent_immediately = True
-                else:
-                    logger.error(f"❌ Failed to send Day 1 lesson immediately to {phone}")
-                
-                # Schedule Day 2 for tomorrow at the regular time
-                if days > 1:
-                    day2_time = now + timedelta(days=1)
-                    day2_time = day2_time.replace(
-                        hour=time_obj.hour, 
-                        minute=time_obj.minute, 
-                        second=0, 
-                        microsecond=0
-                    )
+                if scheduled_time < now:
+                    # For Day 1, send immediately instead of scheduling
+                    logger.info(f"🚀 Day 1 scheduled time was in past, sending immediately!")
                     
-                    job_id = f"{phone}_{course}_day2_{schedule_id}"
-                    scheduler.add_job(
-                        send_course_lesson,
-                        'date',
-                        run_date=day2_time,
-                        args=[phone, course, 2, days],
-                        id=job_id,
-                        replace_existing=True
-                    )
-                    logger.info(f"✅ Scheduled Day 2 for {day2_time}")
-                
-                # Skip scheduling Day 1 since we sent it immediately
-                continue
-                
-            elif scheduled_time < now:
-                # For other days, move to next day if time has passed
+                    # Send Day 1 lesson right away
+                    send_success = send_course_lesson(phone, course, day, days)
+                    if send_success:
+                        logger.info(f"✅ Day 1 lesson sent immediately to {phone}")
+                        day1_sent_immediately = True
+                        # Don't schedule Day 1 - we already sent it
+                        continue
+                    else:
+                        logger.error(f"❌ Failed to send Day 1 lesson immediately to {phone}")
+                        # Fall back to scheduling for tomorrow
+                        scheduled_time += timedelta(days=1)
+            
+            # For other days OR if Day 1 immediate send failed
+            if scheduled_time < now:
                 scheduled_time += timedelta(days=1)
                 logger.info(f"⏰ Scheduled time was in past, moved to: {scheduled_time}")
             
@@ -368,6 +352,10 @@ def schedule_course_messages_detailed(phone, course, days, time_str):
         # Reset progress for this course (unless we sent Day 1 immediately)
         if not day1_sent_immediately:
             reset_progress(phone, course)
+        else:
+            # If Day 1 was sent immediately, progress should be 1
+            increment_progress(phone, course)
+            logger.info(f"📈 Progress updated after immediate Day 1 delivery")
         
         logger.info(f"🎯 Successfully scheduled {days} days of detailed content")
         return True
@@ -1299,3 +1287,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"🚀 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
+
